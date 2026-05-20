@@ -9,22 +9,28 @@ import type {
 } from '../llm.interfaces.js';
 
 /**
- * Provider para Ollama (modelos autoalojados).
- * Usa el endpoint OpenAI-compatible de Ollama: /v1/chat/completions
+ * Provider para Groq.
+ * Usa la API compatible con OpenAI de Groq: https://api.groq.com/openai/v1
  */
 @Injectable()
-export class OllamaProvider implements ILlmProvider {
-  private readonly logger = new Logger(OllamaProvider.name);
-  private readonly baseUrl: string;
+export class GroqProvider implements ILlmProvider {
+  private readonly logger = new Logger(GroqProvider.name);
+  private readonly apiKey: string;
   private readonly model: string;
+  private readonly baseUrl = 'https://api.groq.com/openai/v1';
 
   constructor(private readonly config: ConfigService) {
-    this.baseUrl = this.config.get<string>('OLLAMA_BASE_URL') || 'http://localhost:11434';
-    this.model = this.config.get<string>('OLLAMA_MODEL') || 'llama3.2';
-    this.logger.log(`Ollama provider inicializado: ${this.baseUrl} | modelo: ${this.model}`);
+    this.apiKey = this.config.get<string>('GROQ_API_KEY') || '';
+    this.model = this.config.get<string>('GROQ_MODEL') || 'llama-3.3-70b-versatile';
+    this.logger.log(`Groq provider inicializado | modelo: ${this.model}`);
   }
 
   async chat(messages: Message[], tools: ToolDefinition[]): Promise<LlmResponse> {
+    if (!this.apiKey) {
+      throw new Error('La variable GROQ_API_KEY no está configurada.');
+    }
+
+    // Convertir mensajes al formato compatible con OpenAI
     const openaiMessages = messages.map((msg) => {
       if (msg.role === 'tool') {
         return {
@@ -54,6 +60,7 @@ export class OllamaProvider implements ILlmProvider {
       };
     });
 
+    // Convertir tools al formato compatible con OpenAI
     const openaiTools = tools.map((tool) => ({
       type: 'function' as const,
       function: {
@@ -66,7 +73,7 @@ export class OllamaProvider implements ILlmProvider {
     const body: Record<string, unknown> = {
       model: this.model,
       messages: openaiMessages,
-      stream: false, // Ollama no soporta streaming de tool calls
+      temperature: 0.1, // Baja temperatura para comportamiento consistente de herramientas
     };
 
     if (openaiTools.length > 0) {
@@ -74,20 +81,25 @@ export class OllamaProvider implements ILlmProvider {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+      this.logger.debug(`Enviando petición a Groq (modelo: ${this.model})`);
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
         body: JSON.stringify(body),
       });
 
       if (!response.ok) {
-        throw new Error(`Ollama respondió con status ${response.status}: ${await response.text()}`);
+        const errorText = await response.text();
+        throw new Error(`Groq respondió con status ${response.status}: ${errorText}`);
       }
 
       const data = (await response.json()) as {
         choices: Array<{
           message: {
-            content?: string;
+            content?: string | null;
             tool_calls?: Array<{
               id: string;
               function: { name: string; arguments: string };
@@ -98,18 +110,20 @@ export class OllamaProvider implements ILlmProvider {
 
       const choice = data.choices[0];
       if (!choice) {
-        throw new Error('Ollama devolvió una respuesta vacía');
+        throw new Error('Groq devolvió una respuesta vacía');
       }
 
       const assistantMessage = choice.message;
 
-      // Verificar tool calls
+      // Verificar si el modelo solicitó llamar a herramientas (tool calls)
       if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
         const toolCalls: ToolCall[] = assistantMessage.tool_calls.map((tc) => ({
           id: tc.id,
           name: tc.function.name,
           args: JSON.parse(tc.function.arguments) as Record<string, unknown>,
         }));
+
+        this.logger.debug(`Groq solicitó tool calls: ${toolCalls.map((tc) => tc.name).join(', ')}`);
 
         return {
           text: null,
@@ -124,14 +138,20 @@ export class OllamaProvider implements ILlmProvider {
         hasToolCalls: false,
       };
     } catch (error) {
-      this.logger.error(`Error en Ollama provider: ${(error as Error).message}`);
+      this.logger.error(`Error en Groq provider: ${(error as Error).message}`);
       throw error;
     }
   }
 
   async validateConnection(): Promise<boolean> {
+    if (!this.apiKey) return false;
     try {
-      const response = await fetch(`${this.baseUrl}/api/tags`);
+      const response = await fetch(`${this.baseUrl}/models`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+      });
       return response.ok;
     } catch {
       return false;
@@ -140,7 +160,7 @@ export class OllamaProvider implements ILlmProvider {
 
   getModelInfo() {
     return {
-      provider: 'ollama',
+      provider: 'groq',
       model: this.model,
       supportsStreaming: false,
     };

@@ -14,6 +14,8 @@ export interface Message {
   toolCallId?: string;
   /** Nombre de la tool que generó esta respuesta (solo para role = 'tool') */
   toolName?: string;
+  /** Lista de tool calls generados por el asistente en este turno (solo para role = 'assistant') */
+  toolCalls?: ToolCall[];
 }
 
 // ─── Tool Definitions ───────────────────────────────────────

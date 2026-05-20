@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { LlmService } from './llm.service.js';
 import { GoogleProvider } from './providers/google.provider.js';
 import { OllamaProvider } from './providers/ollama.provider.js';
+import { GroqProvider } from './providers/groq.provider.js';
 import { LLM_PROVIDER_TOKEN } from './llm.interfaces.js';
 
 /**
@@ -26,6 +27,8 @@ import { LLM_PROVIDER_TOKEN } from './llm.interfaces.js';
         switch (apiProvider) {
           case 'google':
             return new GoogleProvider(config);
+          case 'groq':
+            return new GroqProvider(config);
           // Sprint 2+: descomentar cuando se implementen
           // case 'openai':
           //   return new OpenAiProvider(config);

@@ -30,7 +30,13 @@ export class WooCommerceClient {
    * Realiza una petición GET a la API de WooCommerce.
    */
   async get<T = unknown>(endpoint: string, params: Record<string, string> = {}): Promise<T> {
-    const url = new URL(`/wp-json/wc/v3/${endpoint}`, this.baseUrl);
+    // Asegurar que la URL base termine con barra para que las rutas relativas funcionen correctamente
+    let base = this.baseUrl;
+    if (!base.endsWith('/')) {
+      base += '/';
+    }
+    // Usar ruta relativa (sin barra al inicio) para que new URL mantenga las subcarpetas de la base
+    const url = new URL(`wp-json/wc/v3/${endpoint}`, base);
 
     // Auth por query params (Consumer Key/Secret)
     url.searchParams.set('consumer_key', this.consumerKey);
@@ -50,6 +56,15 @@ export class WooCommerceClient {
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`WooCommerce API error (${response.status}): ${errorText}`);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const text = await response.text();
+      throw new Error(
+        `El servidor de WordPress devolvió HTML en lugar de JSON (Content-Type: ${contentType}). ` +
+        `Inicio de la respuesta: ${text.substring(0, 300).replace(/\s+/g, ' ')}...`
+      );
     }
 
     return response.json() as Promise<T>;
@@ -76,6 +91,7 @@ interface WooProduct {
 
 @Injectable()
 export class BuscarProductosTool extends BaseTool {
+  private readonly logger = new Logger(BuscarProductosTool.name);
   readonly name = 'buscar_productos';
 
   constructor(private readonly wooClient: WooCommerceClient) {
@@ -99,8 +115,8 @@ export class BuscarProductosTool extends BaseTool {
             description: 'Filtrar por nombre de categoría (opcional)',
           },
           limite: {
-            type: 'number',
-            description: 'Cantidad máxima de resultados (por defecto 5, máximo 10)',
+            type: 'string',
+            description: 'Cantidad máxima de resultados (por defecto "5", máximo "10")',
           },
         },
         required: ['query'],
@@ -126,7 +142,8 @@ export class BuscarProductosTool extends BaseTool {
 
     try {
       const products = await this.wooClient.get<WooProduct[]>('products', params);
-
+      this.logger.log(`WooCommerce API devolvió ${products?.length || 0} productos.`);
+      
       if (!products || products.length === 0) {
         return `No se encontraron productos para "${query}".`;
       }
@@ -144,6 +161,7 @@ export class BuscarProductosTool extends BaseTool {
 
       return JSON.stringify(formatted, null, 2);
     } catch (error) {
+      this.logger.error(`Error en la herramienta buscar_productos: ${(error as Error).message}`, (error as Error).stack);
       return `Error al buscar productos: ${(error as Error).message}`;
     }
   }

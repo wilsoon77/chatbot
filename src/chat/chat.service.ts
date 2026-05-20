@@ -116,6 +116,7 @@ export class ChatService {
       const assistantToolMsg: Message = {
         role: 'assistant',
         content: `[Llamando herramientas: ${llmResponse.toolCalls.map((tc) => tc.name).join(', ')}]`,
+        toolCalls: llmResponse.toolCalls,
       };
       messages.push(assistantToolMsg);
       this.sessionService.addMessage(sessionId, assistantToolMsg);
