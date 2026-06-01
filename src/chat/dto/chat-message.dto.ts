@@ -25,4 +25,7 @@ export class ChatResponseDto {
 
   @IsOptional()
   model_info?: Record<string, unknown>;
+
+  @IsOptional()
+  products?: any[];
 }

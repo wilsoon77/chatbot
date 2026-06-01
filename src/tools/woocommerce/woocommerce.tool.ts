@@ -1,25 +1,42 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { ToolDefinition } from '../../llm/llm.interfaces.js';
 import { BaseTool } from '../base.tool.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 
 /**
  * Cliente HTTP para la API REST de WooCommerce.
- * Carga credenciales dinámicamente desde la tabla Tenant.
+ * Carga las credenciales dinámicamente desde la base de datos para cada tenant.
  */
 @Injectable()
 export class WooCommerceClient {
   private readonly logger = new Logger(WooCommerceClient.name);
+  private readonly defaultCurrency: string;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {
+    this.defaultCurrency = this.config.get<string>('WOO_CURRENCY') || '$';
+  }
 
+  /**
+   * Obtiene el símbolo de moneda configurado en las variables de entorno.
+   */
+  getCurrencySymbol(): string {
+    return this.defaultCurrency;
+  }
+
+  /**
+   * Obtiene la configuración del tenant desde la base de datos.
+   */
   private async getTenantConfig(tenantId: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
     });
 
     if (!tenant) {
-      throw new Error(`No se encontró el tenant con id: ${tenantId}`);
+      throw new Error(`No se encontró el tenant con ID: ${tenantId}`);
     }
 
     if (
@@ -35,6 +52,9 @@ export class WooCommerceClient {
     return tenant;
   }
 
+  /**
+   * Realiza una petición GET a la API de WooCommerce.
+   */
   async get<T = unknown>(
     tenantId: string,
     endpoint: string,
@@ -42,14 +62,15 @@ export class WooCommerceClient {
   ): Promise<T> {
     const tenant = await this.getTenantConfig(tenantId);
 
+    // Asegura que la URL base termine con barra para que las rutas relativas funcionen
     let base = tenant.woocommerceUrl;
-
     if (!base.endsWith('/')) {
       base += '/';
     }
 
     const url = new URL(`wp-json/wc/v3/${endpoint}`, base);
 
+    // Autenticación por parámetros de consulta (Consumer Key/Secret)
     url.searchParams.set('consumer_key', tenant.consumerKey);
     url.searchParams.set('consumer_secret', tenant.consumerSecret);
 
@@ -76,15 +97,11 @@ export class WooCommerceClient {
     }
 
     const contentType = response.headers.get('content-type') || '';
-
     if (!contentType.includes('application/json')) {
       const text = await response.text();
-
       throw new Error(
         `El servidor de WordPress devolvió HTML en lugar de JSON (Content-Type: ${contentType}). ` +
-          `Inicio de la respuesta: ${text
-            .substring(0, 300)
-            .replace(/\s+/g, ' ')}...`,
+          `Inicio de la respuesta: ${text.substring(0, 300).replace(/\s+/g, ' ')}...`,
       );
     }
 
@@ -113,14 +130,12 @@ interface WooProduct {
 @Injectable()
 export class BuscarProductosTool extends BaseTool {
   private readonly logger = new Logger(BuscarProductosTool.name);
-
   readonly name = 'buscar_productos';
 
   constructor(private readonly wooClient: WooCommerceClient) {
     super();
   }
 
-  // ── Fix 2: descripción más precisa para que el LLM no invente categorías ──
   getDefinition(): ToolDefinition {
     return {
       name: this.name,
@@ -130,18 +145,15 @@ export class BuscarProductosTool extends BaseTool {
         'NO uses el parámetro "categoria" a menos que el usuario haya indicado explícitamente ' +
         'una categoría Y conozcas su ID numérico real en WooCommerce. ' +
         'En caso de duda, omite "categoria" por completo — la búsqueda por "query" es suficiente.',
-
       parameters: {
         type: 'object',
-
         properties: {
           query: {
             type: 'string',
             description:
-              'Palabras clave del producto tal como el usuario las mencionó. ' +
-              'Ejemplo: "Monitor curvo 27 pulgadas", "silla de oficina", "teclado mecánico".',
+              'Término de búsqueda en su forma base y en SINGULAR (ej: buscar "teclado" en lugar de "teclados", "flor" en lugar de "flores"). ' +
+              'Normaliza a la palabra raíz en singular y evita plurales, artículos o marcas secundarias a menos que sean explícitas.',
           },
-
           categoria: {
             type: 'string',
             description:
@@ -149,13 +161,11 @@ export class BuscarProductosTool extends BaseTool {
               'SOLO usar si el usuario especificó una categoría exacta Y tienes su ID numérico real. ' +
               'NO inventar nombres de categorías ni convertirlos a slugs.',
           },
-
           limite: {
             type: 'string',
-            description: 'Máximo de resultados a retornar (por defecto 5, máximo 10).',
+            description: 'Cantidad máxima de resultados a retornar (por defecto "5", máximo "10").',
           },
         },
-
         required: ['query'],
       },
     };
@@ -163,7 +173,6 @@ export class BuscarProductosTool extends BaseTool {
 
   async execute(args: Record<string, unknown>): Promise<string> {
     const tenantId = String(args.tenant_id || '');
-
     this.logger.log(`Tenant recibido para WooCommerce: ${tenantId}`);
 
     const query = String(args.query || '');
@@ -179,18 +188,14 @@ export class BuscarProductosTool extends BaseTool {
       status: 'publish',
     };
 
-    // ── Fix 1: solo aceptar categoria si es un ID numérico real ──
-    // Si el LLM envía un string libre ("Electrónica", "informatica", etc.)
-    // se ignora completamente para evitar que WooCommerce devuelva vacío.
+    // Filtra por categoría solo si se recibe un ID numérico real
+    // Si se envía un texto libre (ej: "Electrónica") se descarta para evitar errores en WooCommerce
     if (args.categoria) {
       const cat = String(args.categoria).trim();
-
       if (/^\d+$/.test(cat)) {
-        // Es un ID numérico válido → seguro usarlo
         params.category = cat;
         this.logger.debug(`Filtrando por categoría ID: ${cat}`);
       } else {
-        // Es un slug o nombre inventado por el LLM → ignorar
         this.logger.warn(
           `Categoría ignorada (no es ID numérico): "${cat}". ` +
             `Se buscará solo por query: "${query}".`,
@@ -209,12 +214,14 @@ export class BuscarProductosTool extends BaseTool {
         return `No se encontraron productos para "${query}".`;
       }
 
+      const currency = this.wooClient.getCurrencySymbol();
+
       const formatted = products.map((p) => ({
         id: p.id,
         nombre: p.name,
         precio: p.on_sale
-          ? `${p.sale_price} (antes ${p.regular_price})`
-          : p.price,
+          ? `${currency}${p.sale_price} (antes ${currency}${p.regular_price})`
+          : `${currency}${p.price}`,
         disponible: p.stock_status === 'instock',
         stock: p.stock_quantity,
         categorias: p.categories.map((c) => c.name).join(', '),
@@ -228,7 +235,6 @@ export class BuscarProductosTool extends BaseTool {
         `Error en la herramienta buscar_productos: ${(error as Error).message}`,
         (error as Error).stack,
       );
-
       return `Error al buscar productos: ${(error as Error).message}`;
     }
   }

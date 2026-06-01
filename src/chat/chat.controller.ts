@@ -19,14 +19,15 @@ export class ChatController {
       `Mensaje recibido — tenant: ${dto.tenant_id} | session: ${dto.session_id}`,
     );
 
-    const reply = await this.chatService.processMessage(
+    const result = await this.chatService.processMessage(
       dto.tenant_id,
       dto.session_id,
       dto.message,
     );
 
     return {
-      reply,
+      reply: result.reply,
+      products: result.products,
       session_id: dto.session_id,
     };
   }

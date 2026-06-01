@@ -1,13 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { LlmService } from '../llm/llm.service';
-import { SessionService } from '../session/session.service';
-import { TenantsService } from '../tenants/tenants.service';
-import { ToolsRegistry } from '../tools/tools.registry';
-import type { Message } from '../llm/llm.interfaces';
+import { LlmService } from '../llm/llm.service.js';
+import { SessionService } from '../session/session.service.js';
+import { TenantsService } from '../tenants/tenants.service.js';
+import { ToolsRegistry } from '../tools/tools.registry.js';
+import type { Message } from '../llm/llm.interfaces.js';
 
 /**
- * ChatService — Orquestador del Agentic Loop
+ * ChatService — Orquestador del Agentic Loop.
+ *
+ * Flujo:
+ * 1. Recibir mensaje del usuario.
+ * 2. Cargar la configuración del tenant desde la base de datos de forma asíncrona.
+ * 3. Cargar el historial de sesión.
+ * 4. Enviar al LLM con las herramientas habilitadas.
+ * 5. Si el LLM pide tool_calls → ejecutar tools pasando el tenant_id → re-enviar al LLM.
+ * 6. Interceptar resultados específicos (ej: buscar_productos) para estructurarlos.
+ * 7. Retornar respuesta final al usuario junto con los metadatos de productos.
  */
 @Injectable()
 export class ChatService {
@@ -21,145 +30,140 @@ export class ChatService {
     private readonly toolsRegistry: ToolsRegistry,
     private readonly config: ConfigService,
   ) {
-    this.maxToolCalls = Number(
-      this.config.get('MAX_TOOL_CALLS_PER_TURN', '5'),
-    );
+    this.maxToolCalls = Number(this.config.get('MAX_TOOL_CALLS_PER_TURN', '5'));
   }
 
   async processMessage(
     tenantId: string,
     sessionId: string,
     userMessage: string,
-  ): Promise<string> {
-
-    // 1. Cargar tenant (🔥 FIX: await)
+  ): Promise<{ reply: string; products?: any[] }> {
+    // Carga la configuración del tenant de forma asíncrona desde la base de datos
     const tenant = await this.tenantsService.getTenantConfig(tenantId);
-
     if (!tenant) {
-      return 'Este asistente no está disponible actualmente.';
+      return { reply: 'Este asistente no está disponible actualmente.' };
     }
 
-    // 2. Historial
-    const history = this.sessionService.getHistory(sessionId);
+    let lastFoundProducts: any[] | undefined = undefined;
 
-    // 3. Construcción de mensajes
+    const history = this.sessionService.getHistory(sessionId);
     const messages: Message[] = [];
 
+    // Prompt de sistema del tenant (siempre se posiciona al inicio)
     messages.push({
       role: 'system',
       content: tenant.systemPrompt,
     });
 
+    // Carga el historial excluyendo prompts de sistema previos para evitar duplicación
     for (const msg of history) {
       if (msg.role !== 'system') {
         messages.push(msg);
       }
     }
 
-    const userMsg: Message = {
-      role: 'user',
-      content: userMessage,
-    };
-
+    const userMsg: Message = { role: 'user', content: userMessage };
     messages.push(userMsg);
-
     this.sessionService.addMessage(sessionId, userMsg);
 
-    // 4. Tools del tenant
-    const toolDefinitions = this.toolsRegistry.getToolDefinitions(
-      tenant.enabledTools,
-    );
-
-    // 5. Agentic loop
+    const toolDefinitions = this.toolsRegistry.getToolDefinitions(tenant.enabledTools);
     let toolCallCount = 0;
 
+    // Bucle de ejecución del agente (Agentic Loop)
     while (true) {
-      this.logger.debug(`Agentic loop — mensajes: ${messages.length}`);
-
-      const llmResponse = await this.llmService.chat(
-        messages,
-        toolDefinitions,
+      this.logger.debug(
+        `Agentic loop — turn ${toolCallCount + 1}, mensajes: ${messages.length}`,
       );
 
-      // 6. Respuesta final
+      const llmResponse = await this.llmService.chat(messages, toolDefinitions);
+
       if (!llmResponse.hasToolCalls) {
-        const reply =
-          llmResponse.text || 'No pude generar una respuesta.';
-
-        const assistantMsg: Message = {
-          role: 'assistant',
-          content: reply,
-        };
-
+        const reply = llmResponse.text || 'Lo siento, no pude generar una respuesta.';
+        const assistantMsg: Message = { role: 'assistant', content: reply };
         this.sessionService.addMessage(sessionId, assistantMsg);
 
-        return reply;
+        return {
+          reply,
+          products: lastFoundProducts,
+        };
       }
 
-      // 7. límite tools
+      // Control de seguridad contra bucles infinitos de llamadas a herramientas
       toolCallCount += llmResponse.toolCalls.length;
-
       if (toolCallCount > this.maxToolCalls) {
+        this.logger.warn(
+          `Límite de tool calls excedido (${toolCallCount}/${this.maxToolCalls}) para sesión ${sessionId}`,
+        );
         const errorReply =
-          'La consulta requirió demasiadas operaciones. Intenta reformularla.';
+          'No pude completar tu consulta porque requería demasiadas operaciones. ¿Podrías reformular tu pregunta?';
 
         this.sessionService.addMessage(sessionId, {
           role: 'assistant',
           content: errorReply,
         });
 
-        return errorReply;
+        return {
+          reply: errorReply,
+        };
       }
 
-      // 8. tool calls del assistant
+      // Registra la llamada a la herramienta en el historial del asistente (requerido por APIs compatibles con OpenAI)
       const assistantToolMsg: Message = {
         role: 'assistant',
-        content: `[Tools: ${llmResponse.toolCalls
-          .map((t) => t.name)
-          .join(', ')}]`,
+        content: `[Llamando herramientas: ${llmResponse.toolCalls.map((tc) => tc.name).join(', ')}]`,
         toolCalls: llmResponse.toolCalls,
       };
-
       messages.push(assistantToolMsg);
       this.sessionService.addMessage(sessionId, assistantToolMsg);
 
-      // 9. ejecutar tools
+      // Ejecución secuencial de las herramientas solicitadas por el LLM
       for (const toolCall of llmResponse.toolCalls) {
+        this.logger.log(`Tool call: ${toolCall.name}(${JSON.stringify(toolCall.args)})`);
 
         if (!tenant.enabledTools.includes(toolCall.name)) {
-          const toolError: Message = {
+          this.logger.warn(
+            `Tool "${toolCall.name}" no habilitada para tenant "${tenantId}"`,
+          );
+          const toolErrorMsg: Message = {
             role: 'tool',
-            content: `Tool "${toolCall.name}" no habilitada.`,
+            content: `Error: La herramienta "${toolCall.name}" no está disponible para este asistente.`,
             toolCallId: toolCall.id,
             toolName: toolCall.name,
           };
-
-          messages.push(toolError);
-          this.sessionService.addMessage(sessionId, toolError);
+          messages.push(toolErrorMsg);
+          this.sessionService.addMessage(sessionId, toolErrorMsg);
           continue;
         }
 
+        // Ejecuta la herramienta inyectando dinámicamente el tenant_id actual del request
         const result = await this.toolsRegistry.executeTool(
           toolCall.name,
-            {
-    ...toolCall.args,
-
-    // NUEVO
-    // El tenant real viene del request.
-    // Nunca del LLM.
-    tenant_id: tenantId,
-  },
+          {
+            ...toolCall.args,
+            tenant_id: tenantId, // El tenant real proviene de la solicitud, nunca del LLM
+          },
         );
 
-        const toolMsg: Message = {
+        // Intercepta e indexa metadatos de productos para enviarlos estructurados al widget
+        if (toolCall.name === 'buscar_productos') {
+          try {
+            const parsed = JSON.parse(result);
+            if (Array.isArray(parsed)) {
+              lastFoundProducts = parsed;
+            }
+          } catch (e) {
+            // Ignora fallos de parseo
+          }
+        }
+
+        const toolResultMsg: Message = {
           role: 'tool',
           content: result,
           toolCallId: toolCall.id,
           toolName: toolCall.name,
         };
-
-        messages.push(toolMsg);
-        this.sessionService.addMessage(sessionId, toolMsg);
+        messages.push(toolResultMsg);
+        this.sessionService.addMessage(sessionId, toolResultMsg);
       }
     }
   }
