@@ -1,13 +1,13 @@
 import { Module } from '@nestjs/common';
-import { ChatController } from './chat.controller.js';
-import { ChatService } from './chat.service.js';
-import { LlmModule } from '../llm/llm.module.js';
-import { SessionModule } from '../session/session.module.js';
-import { TenantModule } from '../tenant/tenant.module.js';
-import { ToolsModule } from '../tools/tools.module.js';
+import { ChatController } from './chat.controller';
+import { ChatService } from './chat.service';
+import { LlmModule } from '../llm/llm.module';
+import { SessionModule } from '../session/session.module';
+import { TenantsModule } from '../tenants/tenants.module';
+import { ToolsModule } from '../tools/tools.module';
 
 @Module({
-  imports: [LlmModule, SessionModule, TenantModule, ToolsModule],
+  imports: [LlmModule, SessionModule, TenantsModule, ToolsModule],
   controllers: [ChatController],
   providers: [ChatService],
 })

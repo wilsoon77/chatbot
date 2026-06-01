@@ -1,8 +1,12 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ChatModule } from './chat/chat.module.js';
-import { LlmModule } from './llm/llm.module.js';
-import { HealthController } from './common/health/health.controller.js';
+
+import { ChatModule } from './chat/chat.module';
+import { LlmModule } from './llm/llm.module';
+import { TenantsModule } from './tenants/tenants.module';
+import { PrismaModule } from './prisma/prisma.module';
+
+import { HealthController } from './common/health/health.controller';
 
 @Module({
   imports: [
@@ -12,6 +16,8 @@ import { HealthController } from './common/health/health.controller.js';
     }),
     ChatModule,
     LlmModule,
+    TenantsModule,
+    PrismaModule,
   ],
   controllers: [HealthController],
 })

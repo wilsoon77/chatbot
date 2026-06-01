@@ -1,69 +1,90 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import type { ToolDefinition } from '../../llm/llm.interfaces.js';
 import { BaseTool } from '../base.tool.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
 
 /**
  * Cliente HTTP para la API REST de WooCommerce.
- * Maneja autenticación con Consumer Key / Secret.
+ * Carga credenciales dinámicamente desde la tabla Tenant.
  */
 @Injectable()
 export class WooCommerceClient {
   private readonly logger = new Logger(WooCommerceClient.name);
-  private readonly baseUrl: string;
-  private readonly consumerKey: string;
-  private readonly consumerSecret: string;
 
-  constructor(private readonly config: ConfigService) {
-    this.baseUrl = this.config.get<string>('WOO_BASE_URL') || '';
-    this.consumerKey = this.config.get<string>('WOO_CONSUMER_KEY') || '';
-    this.consumerSecret = this.config.get<string>('WOO_CONSUMER_SECRET') || '';
+  constructor(private readonly prisma: PrismaService) {}
 
-    if (!this.baseUrl || !this.consumerKey || !this.consumerSecret) {
-      this.logger.warn(
-        'Credenciales de WooCommerce no configuradas. Las tools de WooCommerce no funcionarán.',
+  private async getTenantConfig(tenantId: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+    });
+
+    if (!tenant) {
+      throw new Error(`No se encontró el tenant con id: ${tenantId}`);
+    }
+
+    if (
+      !tenant.woocommerceUrl ||
+      !tenant.consumerKey ||
+      !tenant.consumerSecret
+    ) {
+      throw new Error(
+        `El tenant "${tenant.nombre}" no tiene configuradas las credenciales de WooCommerce.`,
       );
     }
+
+    return tenant;
   }
 
-  /**
-   * Realiza una petición GET a la API de WooCommerce.
-   */
-  async get<T = unknown>(endpoint: string, params: Record<string, string> = {}): Promise<T> {
-    // Asegurar que la URL base termine con barra para que las rutas relativas funcionen correctamente
-    let base = this.baseUrl;
+  async get<T = unknown>(
+    tenantId: string,
+    endpoint: string,
+    params: Record<string, string> = {},
+  ): Promise<T> {
+    const tenant = await this.getTenantConfig(tenantId);
+
+    let base = tenant.woocommerceUrl;
+
     if (!base.endsWith('/')) {
       base += '/';
     }
-    // Usar ruta relativa (sin barra al inicio) para que new URL mantenga las subcarpetas de la base
+
     const url = new URL(`wp-json/wc/v3/${endpoint}`, base);
 
-    // Auth por query params (Consumer Key/Secret)
-    url.searchParams.set('consumer_key', this.consumerKey);
-    url.searchParams.set('consumer_secret', this.consumerSecret);
+    url.searchParams.set('consumer_key', tenant.consumerKey);
+    url.searchParams.set('consumer_secret', tenant.consumerSecret);
 
     for (const [key, value] of Object.entries(params)) {
       url.searchParams.set(key, value);
     }
 
-    this.logger.debug(`WooCommerce GET: ${url.pathname}${url.search}`);
+    this.logger.debug(
+      `WooCommerce GET [${tenant.nombre}]: ${url.pathname}${url.search}`,
+    );
 
     const response = await fetch(url.toString(), {
       method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+      },
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`WooCommerce API error (${response.status}): ${errorText}`);
+      throw new Error(
+        `WooCommerce API error (${response.status}): ${errorText}`,
+      );
     }
 
     const contentType = response.headers.get('content-type') || '';
+
     if (!contentType.includes('application/json')) {
       const text = await response.text();
+
       throw new Error(
         `El servidor de WordPress devolvió HTML en lugar de JSON (Content-Type: ${contentType}). ` +
-        `Inicio de la respuesta: ${text.substring(0, 300).replace(/\s+/g, ' ')}...`
+          `Inicio de la respuesta: ${text
+            .substring(0, 300)
+            .replace(/\s+/g, ' ')}...`,
       );
     }
 
@@ -71,7 +92,7 @@ export class WooCommerceClient {
   }
 }
 
-// ─── Tool: buscar_productos ─────────────────────────────────
+// ────────────────────────────────────────────────────────────
 
 interface WooProduct {
   id: number;
@@ -92,41 +113,65 @@ interface WooProduct {
 @Injectable()
 export class BuscarProductosTool extends BaseTool {
   private readonly logger = new Logger(BuscarProductosTool.name);
+
   readonly name = 'buscar_productos';
 
   constructor(private readonly wooClient: WooCommerceClient) {
     super();
   }
 
+  // ── Fix 2: descripción más precisa para que el LLM no invente categorías ──
   getDefinition(): ToolDefinition {
     return {
       name: this.name,
       description:
-        'Busca productos en la tienda WooCommerce por nombre, palabra clave o categoría. Devuelve una lista de productos con nombre, precio, disponibilidad e imagen.',
+        'Busca productos en la tienda WooCommerce por nombre o palabra clave. ' +
+        'Usa siempre el parámetro "query" con las palabras exactas que mencionó el usuario. ' +
+        'NO uses el parámetro "categoria" a menos que el usuario haya indicado explícitamente ' +
+        'una categoría Y conozcas su ID numérico real en WooCommerce. ' +
+        'En caso de duda, omite "categoria" por completo — la búsqueda por "query" es suficiente.',
+
       parameters: {
         type: 'object',
+
         properties: {
           query: {
             type: 'string',
-            description: 'Término de búsqueda (nombre del producto, palabra clave, etc.)',
+            description:
+              'Palabras clave del producto tal como el usuario las mencionó. ' +
+              'Ejemplo: "Monitor curvo 27 pulgadas", "silla de oficina", "teclado mecánico".',
           },
+
           categoria: {
             type: 'string',
-            description: 'Filtrar por nombre de categoría (opcional)',
+            description:
+              'ID numérico de la categoría en WooCommerce (ej: "17", "42"). ' +
+              'SOLO usar si el usuario especificó una categoría exacta Y tienes su ID numérico real. ' +
+              'NO inventar nombres de categorías ni convertirlos a slugs.',
           },
+
           limite: {
             type: 'string',
-            description: 'Cantidad máxima de resultados (por defecto "5", máximo "10")',
+            description: 'Máximo de resultados a retornar (por defecto 5, máximo 10).',
           },
         },
+
         required: ['query'],
       },
     };
   }
 
   async execute(args: Record<string, unknown>): Promise<string> {
+    const tenantId = String(args.tenant_id || '');
+
+    this.logger.log(`Tenant recibido para WooCommerce: ${tenantId}`);
+
     const query = String(args.query || '');
     const limite = Math.min(Number(args.limite) || 5, 10);
+
+    if (!tenantId) {
+      return 'Error: falta tenant_id.';
+    }
 
     const params: Record<string, string> = {
       search: query,
@@ -134,16 +179,32 @@ export class BuscarProductosTool extends BaseTool {
       status: 'publish',
     };
 
-    // Si se pasa categoría, buscar el ID primero
+    // ── Fix 1: solo aceptar categoria si es un ID numérico real ──
+    // Si el LLM envía un string libre ("Electrónica", "informatica", etc.)
+    // se ignora completamente para evitar que WooCommerce devuelva vacío.
     if (args.categoria) {
-      const catSlug = String(args.categoria).toLowerCase().replace(/\s+/g, '-');
-      params.category = catSlug;
+      const cat = String(args.categoria).trim();
+
+      if (/^\d+$/.test(cat)) {
+        // Es un ID numérico válido → seguro usarlo
+        params.category = cat;
+        this.logger.debug(`Filtrando por categoría ID: ${cat}`);
+      } else {
+        // Es un slug o nombre inventado por el LLM → ignorar
+        this.logger.warn(
+          `Categoría ignorada (no es ID numérico): "${cat}". ` +
+            `Se buscará solo por query: "${query}".`,
+        );
+      }
     }
 
     try {
-      const products = await this.wooClient.get<WooProduct[]>('products', params);
-      this.logger.log(`WooCommerce API devolvió ${products?.length || 0} productos.`);
-      
+      const products = await this.wooClient.get<WooProduct[]>(
+        tenantId,
+        'products',
+        params,
+      );
+
       if (!products || products.length === 0) {
         return `No se encontraron productos para "${query}".`;
       }
@@ -151,7 +212,9 @@ export class BuscarProductosTool extends BaseTool {
       const formatted = products.map((p) => ({
         id: p.id,
         nombre: p.name,
-        precio: p.on_sale ? `${p.sale_price} (antes ${p.regular_price})` : p.price,
+        precio: p.on_sale
+          ? `${p.sale_price} (antes ${p.regular_price})`
+          : p.price,
         disponible: p.stock_status === 'instock',
         stock: p.stock_quantity,
         categorias: p.categories.map((c) => c.name).join(', '),
@@ -161,7 +224,11 @@ export class BuscarProductosTool extends BaseTool {
 
       return JSON.stringify(formatted, null, 2);
     } catch (error) {
-      this.logger.error(`Error en la herramienta buscar_productos: ${(error as Error).message}`, (error as Error).stack);
+      this.logger.error(
+        `Error en la herramienta buscar_productos: ${(error as Error).message}`,
+        (error as Error).stack,
+      );
+
       return `Error al buscar productos: ${(error as Error).message}`;
     }
   }
