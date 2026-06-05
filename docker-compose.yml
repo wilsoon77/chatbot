@@ -24,6 +24,7 @@
         - redisdata:/data
 
     app:
+      build: .
       image: chatbot-core-app:latest
       container_name: chatbot_app
       restart: always
