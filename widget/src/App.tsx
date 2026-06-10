@@ -24,15 +24,34 @@ export default function App({ tenant, color, botName, avatarUrl }: AppProps) {
   useEffect(() => {
     if (!tenant) return;
 
-    // 1. Inicializar session_id único de forma persistente para este navegador
+    // 1. Verificar si la última actividad ha expirado (más de 30 minutos)
+    const TTL_MS = 30 * 60 * 1000; // 30 minutos
+    const storedLastActivity = localStorage.getItem(`chat_last_activity_${tenant}`);
+    if (storedLastActivity) {
+      const lastActivity = Number(storedLastActivity);
+      if (Date.now() - lastActivity > TTL_MS) {
+        // Expirado: Limpiar datos de la sesión anterior
+        const oldSessionId = localStorage.getItem(`chat_session_${tenant}`);
+        if (oldSessionId) {
+          localStorage.removeItem(`chat_history_${tenant}_${oldSessionId}`);
+          localStorage.removeItem(`chat_products_${tenant}_${oldSessionId}`);
+        }
+        localStorage.removeItem(`chat_session_${tenant}`);
+        localStorage.removeItem(`chat_last_activity_${tenant}`);
+      }
+    }
+
+    // 2. Inicializar session_id único de forma persistente para este navegador
     let sId = localStorage.getItem(`chat_session_${tenant}`);
     if (!sId) {
       sId = `sess_${Math.random().toString(36).substring(2, 15)}_${Date.now()}`;
       localStorage.setItem(`chat_session_${tenant}`, sId);
+      // Establecer actividad inicial
+      localStorage.setItem(`chat_last_activity_${tenant}`, Date.now().toString());
     }
     setSessionId(sId);
 
-    // 2. Cargar historial y productos del localStorage si existen para esta sesión
+    // 3. Cargar historial y productos del localStorage si existen para esta sesión
     const storedHistory = localStorage.getItem(`chat_history_${tenant}_${sId}`);
     const storedProducts = localStorage.getItem(`chat_products_${tenant}_${sId}`);
     
@@ -56,6 +75,7 @@ export default function App({ tenant, color, botName, avatarUrl }: AppProps) {
     if (!sessionId) return;
     localStorage.setItem(`chat_history_${tenant}_${sessionId}`, JSON.stringify(updatedMsgs));
     localStorage.setItem(`chat_products_${tenant}_${sessionId}`, JSON.stringify(updatedProds));
+    localStorage.setItem(`chat_last_activity_${tenant}`, Date.now().toString());
   };
 
   const handleSendMessage = async (text: string) => {
@@ -83,6 +103,23 @@ export default function App({ tenant, color, botName, avatarUrl }: AppProps) {
       // Asocia metadatos de productos estructurados si la respuesta del API los incluye
       if ((res as any).products && Array.isArray((res as any).products)) {
         newProducts[newMessages.length - 1] = (res as any).products;
+      }
+
+      // Procesa acciones del cliente si vienen indicadas (ej: agregar_al_carrito)
+      if ((res as any).action) {
+        const action = (res as any).action;
+        if (action.type === 'add_to_cart') {
+          // Desencadena un evento personalizado en el DOM global (fuera del Shadow DOM)
+          // para que el sitio anfitrión de WordPress intercepte la acción y añada al carrito
+          const event = new CustomEvent('chatbot:add_to_cart', {
+            bubbles: true,
+            detail: {
+              productId: action.payload.productId,
+              quantity: action.payload.quantity,
+            },
+          });
+          window.dispatchEvent(event);
+        }
       }
 
       setMessages(newMessages);

@@ -127,6 +127,29 @@ interface WooProduct {
   permalink: string;
 }
 
+interface WooOrder {
+  id: number;
+  status: string;
+  total: string;
+  payment_method_title: string;
+  date_created: string;
+  billing: {
+    email: string;
+  };
+  line_items: Array<{
+    name: string;
+    quantity: number;
+    total: string;
+  }>;
+}
+
+interface WooCategory {
+  id: number;
+  name: string;
+  slug: string;
+  count: number;
+}
+
 @Injectable()
 export class BuscarProductosTool extends BaseTool {
   private readonly logger = new Logger(BuscarProductosTool.name);
@@ -175,21 +198,23 @@ export class BuscarProductosTool extends BaseTool {
     const tenantId = String(args.tenant_id || '');
     this.logger.log(`Tenant recibido para WooCommerce: ${tenantId}`);
 
-    const query = String(args.query || '');
+    const query = String(args.query || '').trim();
     const limite = Math.min(Number(args.limite) || 5, 10);
 
     if (!tenantId) {
       return 'Error: falta tenant_id.';
     }
 
+    // Si la búsqueda viene de la API, pedimos un volumen ligeramente mayor (x3)
+    // para poder realizar el filtro inteligente localmente y aún así retornar suficientes resultados
+    const requestLimit = query.length <= 4 ? limite * 3 : limite;
+
     const params: Record<string, string> = {
       search: query,
-      per_page: String(limite),
+      per_page: String(requestLimit),
       status: 'publish',
     };
 
-    // Filtra por categoría solo si se recibe un ID numérico real
-    // Si se envía un texto libre (ej: "Electrónica") se descarta para evitar errores en WooCommerce
     if (args.categoria) {
       const cat = String(args.categoria).trim();
       if (/^\d+$/.test(cat)) {
@@ -197,14 +222,13 @@ export class BuscarProductosTool extends BaseTool {
         this.logger.debug(`Filtrando por categoría ID: ${cat}`);
       } else {
         this.logger.warn(
-          `Categoría ignorada (no es ID numérico): "${cat}". ` +
-            `Se buscará solo por query: "${query}".`,
+          `Categoría ignorada (no es ID numérico): "${cat}". Se buscará solo por query: "${query}".`,
         );
       }
     }
 
     try {
-      const products = await this.wooClient.get<WooProduct[]>(
+      let products = await this.wooClient.get<WooProduct[]>(
         tenantId,
         'products',
         params,
@@ -212,6 +236,26 @@ export class BuscarProductosTool extends BaseTool {
 
       if (!products || products.length === 0) {
         return `No se encontraron productos para "${query}".`;
+      }
+
+      // Filtro de palabra completa inteligente (Word Boundary / Límites de palabra)
+      // Evita falsos positivos como que "RAM" coincida con "programa" o "herramientas".
+      if (query.length > 0) {
+        // Escapar caracteres regex especiales en la query del usuario
+        const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        // Regex de límites de palabras para la query, insensible a mayúsculas/minúsculas
+        const wordReg = new RegExp(`\\b${escapedQuery}\\b`, 'i');
+
+        const filtered = products.filter((p) => wordReg.test(p.name));
+        
+        // Si el filtro estricto por palabras completas nos deja resultados, lo usamos.
+        // Si no queda nada (por ejemplo, porque es una palabra recortada), caemos al listado original
+        // para no romper la experiencia en búsquedas incompletas.
+        if (filtered.length > 0) {
+          products = filtered.slice(0, limite);
+        } else {
+          products = products.slice(0, limite);
+        }
       }
 
       const currency = this.wooClient.getCurrencySymbol();
@@ -237,5 +281,229 @@ export class BuscarProductosTool extends BaseTool {
       );
       return `Error al buscar productos: ${(error as Error).message}`;
     }
+  }
+}
+
+// ─── Tool: ver_stock ────────────────────────────────────────
+
+@Injectable()
+export class VerStockTool extends BaseTool {
+  private readonly logger = new Logger(VerStockTool.name);
+  readonly name = 'ver_stock';
+
+  constructor(private readonly wooClient: WooCommerceClient) {
+    super();
+  }
+
+  getDefinition(): ToolDefinition {
+    return {
+      name: this.name,
+      description: 'Obtiene las existencias físicas e inventario disponible de un producto específico mediante su ID.',
+      parameters: {
+        type: 'object',
+        properties: {
+          producto_id: {
+            type: 'number',
+            description: 'El ID numérico del producto (ej: 42, 107). Extraído del producto retornado previamente.',
+          },
+        },
+        required: ['producto_id'],
+      },
+    };
+  }
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const tenantId = String(args.tenant_id || '');
+    const productId = Number(args.producto_id);
+
+    if (!tenantId) return 'Error: falta tenant_id.';
+    if (isNaN(productId)) return 'Error: producto_id inválido.';
+
+    try {
+      const p = await this.wooClient.get<WooProduct>(tenantId, `products/${productId}`);
+      
+      const stockInfo = {
+        id: p.id,
+        nombre: p.name,
+        disponible: p.stock_status === 'instock',
+        stock: p.stock_quantity !== null ? p.stock_quantity : 'Ilimitado / Sin control detallado',
+      };
+
+      return JSON.stringify(stockInfo, null, 2);
+    } catch (error) {
+      this.logger.error(`Error en la herramienta ver_stock: ${(error as Error).message}`);
+      return `Error al consultar stock: ${(error as Error).message}`;
+    }
+  }
+}
+
+// ─── Tool: ver_estado_pedido ────────────────────────────────
+
+@Injectable()
+export class VerEstadoPedidoTool extends BaseTool {
+  private readonly logger = new Logger(VerEstadoPedidoTool.name);
+  readonly name = 'ver_estado_pedido';
+
+  constructor(private readonly wooClient: WooCommerceClient) {
+    super();
+  }
+
+  getDefinition(): ToolDefinition {
+    return {
+      name: this.name,
+      description:
+        'Obtiene el estado, detalles y resumen de un pedido de WooCommerce por su ID. ' +
+        'Por seguridad, exige que el usuario proporcione el correo electrónico con el que facturó ' +
+        'y el ID de su pedido.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pedido_id: {
+            type: 'number',
+            description: 'El ID numérico de la orden o pedido (ej: 1422).',
+          },
+          email: {
+            type: 'string',
+            description: 'El correo electrónico asociado al pedido para validación de identidad.',
+          },
+        },
+        required: ['pedido_id', 'email'],
+      },
+    };
+  }
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const tenantId = String(args.tenant_id || '');
+    const orderId = Number(args.pedido_id);
+    const email = String(args.email || '').trim().toLowerCase();
+
+    if (!tenantId) return 'Error: falta tenant_id.';
+    if (isNaN(orderId)) return 'Error: pedido_id inválido.';
+    if (!email) return 'Error: el correo electrónico es obligatorio para validación de seguridad.';
+
+    try {
+      const order = await this.wooClient.get<WooOrder>(tenantId, `orders/${orderId}`);
+
+      // Validación estricta de seguridad: El correo provisto debe coincidir con el del pedido
+      const billingEmail = String(order.billing?.email || '').trim().toLowerCase();
+      if (billingEmail !== email) {
+        this.logger.warn(`Intento de acceso denegado a orden ${orderId}: correo "${email}" no coincide con "${billingEmail}"`);
+        return 'Acceso denegado: El correo electrónico provisto no coincide con el correo de facturación de esta orden.';
+      }
+
+      const formattedOrder = {
+        id: order.id,
+        estado: order.status,
+        total: `${this.wooClient.getCurrencySymbol()}${order.total}`,
+        metodo_pago: order.payment_method_title,
+        fecha: order.date_created,
+        items: order.line_items.map((item) => ({
+          producto: item.name,
+          cantidad: item.quantity,
+          total: `${this.wooClient.getCurrencySymbol()}${item.total}`,
+        })),
+      };
+
+      return JSON.stringify(formattedOrder, null, 2);
+    } catch (error) {
+      this.logger.error(`Error en la herramienta ver_estado_pedido: ${(error as Error).message}`);
+      return `Error al consultar pedido: ${(error as Error).message}`;
+    }
+  }
+}
+
+// ─── Tool: obtener_categorias ──────────────────────────────
+
+@Injectable()
+export class ObtenerCategoriasTool extends BaseTool {
+  private readonly logger = new Logger(ObtenerCategoriasTool.name);
+  readonly name = 'obtener_categorias';
+
+  constructor(private readonly wooClient: WooCommerceClient) {
+    super();
+  }
+
+  getDefinition(): ToolDefinition {
+    return {
+      name: this.name,
+      description: 'Obtiene las categorías de productos disponibles en la tienda con sus respectivos IDs numéricos y conteo de productos.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    };
+  }
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const tenantId = String(args.tenant_id || '');
+    if (!tenantId) return 'Error: falta tenant_id.';
+
+    try {
+      const categories = await this.wooClient.get<WooCategory[]>(tenantId, 'products/categories', {
+        per_page: '100',
+        hide_empty: 'true',
+      });
+
+      const formatted = categories.map((c) => ({
+        id: c.id,
+        nombre: c.name,
+        slug: c.slug,
+        total_productos: c.count,
+      }));
+
+      return JSON.stringify(formatted, null, 2);
+    } catch (error) {
+      this.logger.error(`Error en la herramienta obtener_categorias: ${(error as Error).message}`);
+      return `Error al obtener categorías: ${(error as Error).message}`;
+    }
+  }
+}
+
+// ─── Tool: agregar_al_carrito ───────────────────────────────
+
+@Injectable()
+export class AgregarAlCarritoTool extends BaseTool {
+  readonly name = 'agregar_al_carrito';
+
+  getDefinition(): ToolDefinition {
+    return {
+      name: this.name,
+      description: 'Solicita agregar un producto al carrito de compras del usuario mediante su ID de producto.',
+      parameters: {
+        type: 'object',
+        properties: {
+          producto_id: {
+            type: 'number',
+            description: 'El ID numérico del producto a agregar.',
+          },
+          cantidad: {
+            type: 'number',
+            description: 'Cantidad de unidades a agregar (por defecto 1).',
+          },
+        },
+        required: ['producto_id'],
+      },
+    };
+  }
+
+  async execute(args: Record<string, unknown>): Promise<string> {
+    const productId = Number(args.producto_id);
+    const quantity = Math.max(Number(args.cantidad) || 1, 1);
+
+    if (isNaN(productId)) {
+      return 'Error: El ID del producto no es válido.';
+    }
+
+    // Esta herramienta responde con una confirmación que el LLM transmitirá al usuario.
+    // La acción real de inyectar en el carrito se interceptará en el flujo del ChatService
+    // y se enviará en los metadatos HTTP para que el frontend (React) la ejecute en local.
+    const resultPayload = {
+      status: 'pending_client_action',
+      producto_id: productId,
+      cantidad: quantity,
+      mensaje: `Solicitud procesada: se agregará el producto ID ${productId} (cantidad: ${quantity}) al carrito del cliente.`,
+    };
+
+    return JSON.stringify(resultPayload, null, 2);
   }
 }

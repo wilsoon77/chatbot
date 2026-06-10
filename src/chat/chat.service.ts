@@ -15,8 +15,8 @@ import type { Message } from '../llm/llm.interfaces.js';
  * 3. Cargar el historial de sesión.
  * 4. Enviar al LLM con las herramientas habilitadas.
  * 5. Si el LLM pide tool_calls → ejecutar tools pasando el tenant_id → re-enviar al LLM.
- * 6. Interceptar resultados específicos (ej: buscar_productos) para estructurarlos.
- * 7. Retornar respuesta final al usuario junto con los metadatos de productos.
+ * 6. Interceptar resultados específicos (ej: buscar_productos o agregar_al_carrito) para estructurarlos.
+ * 7. Retornar respuesta final al usuario junto con los metadatos de productos o acciones del cliente.
  */
 @Injectable()
 export class ChatService {
@@ -37,7 +37,11 @@ export class ChatService {
     tenantId: string,
     sessionId: string,
     userMessage: string,
-  ): Promise<{ reply: string; products?: any[] }> {
+  ): Promise<{
+    reply: string;
+    products?: any[];
+    action?: { type: string; payload: Record<string, any> };
+  }> {
     // Carga la configuración del tenant de forma asíncrona desde la base de datos
     const tenant = await this.tenantsService.getTenantConfig(tenantId);
     if (!tenant) {
@@ -45,8 +49,10 @@ export class ChatService {
     }
 
     let lastFoundProducts: any[] | undefined = undefined;
+    let pendingAction: { type: string; payload: Record<string, any> } | undefined = undefined;
 
-    const history = this.sessionService.getHistory(sessionId);
+    // Carga asíncronamente el historial de la conversación desde Redis
+    const history = await this.sessionService.getHistory(sessionId);
     const messages: Message[] = [];
 
     // Prompt de sistema del tenant (siempre se posiciona al inicio)
@@ -64,7 +70,9 @@ export class ChatService {
 
     const userMsg: Message = { role: 'user', content: userMessage };
     messages.push(userMsg);
-    this.sessionService.addMessage(sessionId, userMsg);
+    
+    // Guarda el mensaje del usuario de forma asíncrona en la base de datos de Redis
+    await this.sessionService.addMessage(sessionId, userMsg);
 
     const toolDefinitions = this.toolsRegistry.getToolDefinitions(tenant.enabledTools);
     let toolCallCount = 0;
@@ -80,11 +88,14 @@ export class ChatService {
       if (!llmResponse.hasToolCalls) {
         const reply = llmResponse.text || 'Lo siento, no pude generar una respuesta.';
         const assistantMsg: Message = { role: 'assistant', content: reply };
-        this.sessionService.addMessage(sessionId, assistantMsg);
+        
+        // Guarda la respuesta final del asistente asíncronamente en Redis
+        await this.sessionService.addMessage(sessionId, assistantMsg);
 
         return {
           reply,
           products: lastFoundProducts,
+          action: pendingAction,
         };
       }
 
@@ -97,7 +108,7 @@ export class ChatService {
         const errorReply =
           'No pude completar tu consulta porque requería demasiadas operaciones. ¿Podrías reformular tu pregunta?';
 
-        this.sessionService.addMessage(sessionId, {
+        await this.sessionService.addMessage(sessionId, {
           role: 'assistant',
           content: errorReply,
         });
@@ -114,7 +125,7 @@ export class ChatService {
         toolCalls: llmResponse.toolCalls,
       };
       messages.push(assistantToolMsg);
-      this.sessionService.addMessage(sessionId, assistantToolMsg);
+      await this.sessionService.addMessage(sessionId, assistantToolMsg);
 
       // Ejecución secuencial de las herramientas solicitadas por el LLM
       for (const toolCall of llmResponse.toolCalls) {
@@ -131,7 +142,7 @@ export class ChatService {
             toolName: toolCall.name,
           };
           messages.push(toolErrorMsg);
-          this.sessionService.addMessage(sessionId, toolErrorMsg);
+          await this.sessionService.addMessage(sessionId, toolErrorMsg);
           continue;
         }
 
@@ -156,6 +167,24 @@ export class ChatService {
           }
         }
 
+        // Intercepta y mapea la acción de agregar al carrito para el frontend
+        if (toolCall.name === 'agregar_al_carrito') {
+          try {
+            const parsed = JSON.parse(result);
+            if (parsed.status === 'pending_client_action') {
+              pendingAction = {
+                type: 'add_to_cart',
+                payload: {
+                  productId: parsed.producto_id,
+                  quantity: parsed.cantidad,
+                },
+              };
+            }
+          } catch (e) {
+            // Ignora fallos de parseo
+          }
+        }
+
         const toolResultMsg: Message = {
           role: 'tool',
           content: result,
@@ -163,7 +192,7 @@ export class ChatService {
           toolName: toolCall.name,
         };
         messages.push(toolResultMsg);
-        this.sessionService.addMessage(sessionId, toolResultMsg);
+        await this.sessionService.addMessage(sessionId, toolResultMsg);
       }
     }
   }

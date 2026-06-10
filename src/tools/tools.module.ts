@@ -3,10 +3,22 @@ import { ToolsRegistry } from './tools.registry.js';
 import {
   WooCommerceClient,
   BuscarProductosTool,
+  VerStockTool,
+  VerEstadoPedidoTool,
+  ObtenerCategoriasTool,
+  AgregarAlCarritoTool,
 } from './woocommerce/woocommerce.tool.js';
 
 @Module({
-  providers: [WooCommerceClient, BuscarProductosTool, ToolsRegistry],
+  providers: [
+    WooCommerceClient,
+    BuscarProductosTool,
+    VerStockTool,
+    VerEstadoPedidoTool,
+    ObtenerCategoriasTool,
+    AgregarAlCarritoTool,
+    ToolsRegistry,
+  ],
   exports: [ToolsRegistry],
 })
 export class ToolsModule {}

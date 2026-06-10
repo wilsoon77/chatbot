@@ -62,3 +62,29 @@ if (currentScript) {
 
   document.body.appendChild(widgetElement);
 }
+
+// ─── Escucha global de eventos de WooCommerce ────────────────────────
+// Captura la acción disparada desde App.tsx y añade el producto al carrito de WooCommerce
+// usando llamadas asíncronas nativas de WordPress para evitar redirecciones molestas.
+window.addEventListener('chatbot:add_to_cart', async (e: any) => {
+  const { productId, quantity } = e.detail;
+  console.log(`[Chatbot] Añadiendo al carrito: Producto ${productId}, cantidad ${quantity}`);
+
+  try {
+    // Intenta enviar la adición al carrito usando el endpoint nativo de WooCommerce
+    // Esto funciona en la mayoría de los temas modernos de WordPress compatibles con AJAX
+    const response = await fetch(`/?add-to-cart=${productId}&quantity=${quantity}`, {
+      method: 'GET',
+    });
+
+    if (response.ok) {
+      console.log('[Chatbot] Producto añadido al carrito nativo exitosamente.');
+      
+      // Disparar evento de actualización del carrito de WooCommerce para que el tema actualice los contadores visuales (ej. minicart)
+      const updateEvent = new CustomEvent('wc_fragment_refresh', { bubbles: true });
+      document.body.dispatchEvent(updateEvent);
+    }
+  } catch (error) {
+    console.error('[Chatbot] Error al añadir al carrito mediante AJAX:', error);
+  }
+});

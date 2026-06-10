@@ -28,6 +28,7 @@ export class ChatController {
     return {
       reply: result.reply,
       products: result.products,
+      action: result.action,
       session_id: dto.session_id,
     };
   }

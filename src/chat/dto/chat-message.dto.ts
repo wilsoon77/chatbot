@@ -28,4 +28,10 @@ export class ChatResponseDto {
 
   @IsOptional()
   products?: any[];
+
+  @IsOptional()
+  action?: {
+    type: string;
+    payload: Record<string, any>;
+  };
 }

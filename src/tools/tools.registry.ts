@@ -1,7 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { ToolDefinition } from '../llm/llm.interfaces.js';
 import { BaseTool } from './base.tool.js';
-import { BuscarProductosTool } from './woocommerce/woocommerce.tool.js';
+import {
+  BuscarProductosTool,
+  VerStockTool,
+  VerEstadoPedidoTool,
+  ObtenerCategoriasTool,
+  AgregarAlCarritoTool,
+} from './woocommerce/woocommerce.tool.js';
 
 /**
  * Registry de tools.
@@ -15,9 +21,17 @@ export class ToolsRegistry {
 
   constructor(
     private readonly buscarProductos: BuscarProductosTool,
+    private readonly verStock: VerStockTool,
+    private readonly verEstadoPedido: VerEstadoPedidoTool,
+    private readonly obtenerCategorias: ObtenerCategoriasTool,
+    private readonly agregarAlCarrito: AgregarAlCarritoTool,
   ) {
     // Registrar todas las tools disponibles
     this.registerTool(this.buscarProductos);
+    this.registerTool(this.verStock);
+    this.registerTool(this.verEstadoPedido);
+    this.registerTool(this.obtenerCategorias);
+    this.registerTool(this.agregarAlCarrito);
 
     this.logger.log(
       `Tools registradas: ${Array.from(this.tools.keys()).join(', ')}`,

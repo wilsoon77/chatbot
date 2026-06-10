@@ -1,98 +1,95 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Chatbot Agentic multi-tenant para WooCommerce
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Este proyecto es un sistema de chatbot conversacional inteligente (agente de IA) multi-tenant diseñado para integrarse con tiendas de WooCommerce. 
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## 🚀 Arquitectura del Proyecto
 
-## Description
+El sistema está compuesto por:
+1.  **Backend (NestJS):** Orquestador de la conversación (Agentic Loop), ejecución de herramientas de WooCommerce (consulta de stock, estado del pedido, buscar productos, y añadir al carrito) y conexión al LLM.
+2.  **Widget (Vite + React):** Un widget de chat autoinyectable encapsulado en un **Shadow DOM**, garantizando que los estilos CSS no tengan conflictos con la web anfitriona.
+3.  **Base de Datos (PostgreSQL):** Almacena de forma persistente la configuración de cada tienda (Tenant): prompts de sistema, URL del sitio WooCommerce, claves de API de WooCommerce y herramientas habilitadas.
+4.  **Caché (Redis):** Persiste el historial de mensajes de los chats de forma asíncrona mediante un cliente de alto rendimiento, aplicando un **TTL nativo de 30 minutos** para liberar memoria del servidor.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+---
 
-## Project setup
+## 🛠️ Requisitos Previos
 
+Asegúrate de tener instalado en tu sistema local:
+*   [Docker](https://www.docker.com/products/docker-desktop)
+*   [Docker Compose](https://docs.docker.com/compose/install/)
+
+---
+
+## 🏁 Guía de Inicio Rápido (Despliegue con Docker)
+
+Sigue estos pasos para levantar todo el proyecto desde cero en tu máquina local:
+
+### 1. Variables de Entorno
+Copia el archivo `.env.example` en la raíz del proyecto y renómbralo a `.env`:
 ```bash
-$ npm install
+cp .env.example .env
+```
+Abre el archivo `.env` y configura tu API Key del LLM (ej. de Groq o Google Gemini) junto con las claves correspondientes.
+
+### 2. Levantar el Entorno en Docker
+Compila y levanta la base de datos Postgres, el servidor de caché Redis y el servidor de NestJS con el widget integrado en segundo plano:
+```bash
+docker compose up --build -d
+```
+*Nota: Al iniciar por primera vez, el backend ejecutará automáticamente las migraciones iniciales de Prisma (`npx prisma migrate deploy`) para estructurar las tablas de la base de datos.*
+
+### 3. Importar la Base de Datos Inicial (Volcado SQL)
+Para tener el entorno funcional de inmediato, debes importar el respaldo de base de datos de tu compañero (`respaldo_agente.sql`), el cual contiene la configuración del Tenant y sus WooCommerce Keys reales.
+
+Ejecuta en tu terminal:
+```bash
+# A) Vaciar el esquema generado por las migraciones iniciales para evitar conflictos de claves duplicadas
+docker exec -i bot_postgres psql -U botuser -d botdb -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
+# B) Importar el volcado de base de datos SQL
+docker exec -i bot_postgres psql -U botuser -d botdb < respaldo_agente.sql
 ```
 
-## Compile and run the project
+### 4. Configurar el Script en WordPress / HTML
+Una vez importada la base de datos, el identificador único (ID) del Tenant configurado será **`cmprh438b0002fgbkqslxem5t`**.
 
-```bash
-# development
-$ npm run start
+Debes asegurarte de que el código del script que pegas en tu sitio de WordPress (o en tu playground HTML local `widget/index.html`) coincida exactamente con este ID en el atributo `data-tenant` para que el backend reconozca la tienda:
 
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+```html
+<script 
+  src="http://localhost:3000/widget.js" 
+  data-tenant="cmprh438b0002fgbkqslxem5t" 
+  data-color="#10b981" 
+  data-bot-name="Asistente de Compras"
+></script>
 ```
 
-## Run tests
-
+### 5. Reiniciar el Backend
+Reinicia el servicio backend para asegurar la correcta conexión y lectura de los datos recién importados:
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+docker compose restart app
 ```
 
-## Deployment
+---
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## 🧪 Pruebas Locales del Widget
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+El widget de chat se sirve estáticamente en la URL: `http://localhost:3000/widget.js`
+
+1.  Abre el archivo de playground local `widget/index.html` en tu navegador (el cual ya está configurado con el ID `cmprh438b0002fgbkqslxem5t`).
+2.  Interactúa con el chatbot enviando preguntas sobre productos, stock o simulando adición al carrito.
+
+---
+
+## 💾 Monitoreo de Sesiones en Redis
+
+Para asegurarte de que el historial se persiste con el TTL de 30 minutos, conéctate al CLI de tu contenedor Redis:
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+docker exec -it bot_redis redis-cli
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Comandos útiles en `redis-cli`:
+*   `KEYS *`: Muestra las claves de sesión activas (formato `session:sess_...`).
+*   `TTL session:<session_id>`: Muestra los segundos restantes de la sesión antes de expirar (inicia en `1800` segundos).
+*   `GET session:<session_id>`: Imprime el JSON completo con los mensajes de la conversación guardada.

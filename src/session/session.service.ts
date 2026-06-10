@@ -1,69 +1,83 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import Redis from 'ioredis';
 import type { Message } from '../llm/llm.interfaces.js';
 
 /**
- * Servicio de sesiones (Sprint 1: en memoria).
- * Almacena el historial de conversaciones por session_id en un Map.
- * En Sprint 2 se migrará a Redis con TTL.
+ * Servicio de sesiones de chat.
+ * Almacena el historial de conversaciones de forma persistente y asíncrona en Redis con TTL de 30 minutos.
  */
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
-  private readonly sessions = new Map<string, Message[]>();
+  private readonly redis: Redis;
 
-  /** TTL de sesiones en milisegundos (30 minutos) */
-  private readonly SESSION_TTL = 30 * 60 * 1000;
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** TTL de sesiones en segundos (30 minutos) */
+  private readonly SESSION_TTL_SECONDS = 30 * 60;
+
+  constructor(private readonly config: ConfigService) {
+    const redisUrl = this.config.get<string>('REDIS_URL') || 'redis://localhost:6379';
+    
+    // Inicializar conexión con el servidor de Redis
+    this.redis = new Redis(redisUrl);
+    
+    this.redis.on('connect', () => {
+      this.logger.log('Conectado exitosamente al servidor de Redis para sesiones.');
+    });
+
+    this.redis.on('error', (error: Error) => {
+      this.logger.error(`Error en la conexión con Redis: ${error.message}`, error.stack);
+    });
+  }
 
   /**
    * Obtiene el historial de una sesión.
-   * Si no existe, retorna un array vacío.
+   * Si no existe o expira, retorna un array vacío.
    */
-  getHistory(sessionId: string): Message[] {
-    return this.sessions.get(sessionId) || [];
-  }
-
-  /**
-   * Guarda el historial actualizado de una sesión.
-   * Reinicia el TTL.
-   */
-  saveHistory(sessionId: string, messages: Message[]): void {
-    this.sessions.set(sessionId, messages);
-    this.resetTtl(sessionId);
-  }
-
-  /**
-   * Agrega un mensaje al historial de una sesión.
-   */
-  addMessage(sessionId: string, message: Message): void {
-    const history = this.getHistory(sessionId);
-    history.push(message);
-    this.saveHistory(sessionId, history);
-  }
-
-  /**
-   * Elimina una sesión.
-   */
-  clearSession(sessionId: string): void {
-    this.sessions.delete(sessionId);
-    const timer = this.timers.get(sessionId);
-    if (timer) {
-      clearTimeout(timer);
-      this.timers.delete(sessionId);
+  async getHistory(sessionId: string): Promise<Message[]> {
+    try {
+      const data = await this.redis.get(`session:${sessionId}`);
+      if (!data) return [];
+      return JSON.parse(data) as Message[];
+    } catch (error) {
+      this.logger.error(`Error al leer sesión ${sessionId} desde Redis: ${(error as Error).message}`);
+      return [];
     }
   }
 
-  /** Reinicia el timer de TTL para una sesión */
-  private resetTtl(sessionId: string): void {
-    const existing = this.timers.get(sessionId);
-    if (existing) clearTimeout(existing);
+  /**
+   * Guarda el historial de mensajes de una sesión.
+   * Aplica un TTL nativo por base de datos de 30 minutos.
+   */
+  async saveHistory(sessionId: string, messages: Message[]): Promise<void> {
+    try {
+      const key = `session:${sessionId}`;
+      const value = JSON.stringify(messages);
+      
+      // Guarda en Redis aplicando TTL de expiración en segundos
+      await this.redis.set(key, value, 'EX', this.SESSION_TTL_SECONDS);
+    } catch (error) {
+      this.logger.error(`Error al guardar sesión ${sessionId} en Redis: ${(error as Error).message}`);
+    }
+  }
 
-    const timer = setTimeout(() => {
-      this.logger.debug(`Sesión ${sessionId} expirada por TTL`);
-      this.sessions.delete(sessionId);
-      this.timers.delete(sessionId);
-    }, this.SESSION_TTL);
+  /**
+   * Agrega un mensaje al historial de una sesión de forma asíncrona.
+   */
+  async addMessage(sessionId: string, message: Message): Promise<void> {
+    const history = await this.getHistory(sessionId);
+    history.push(message);
+    await this.saveHistory(sessionId, history);
+  }
 
-    this.timers.set(sessionId, timer);
+  /**
+   * Elimina una sesión de la caché de Redis.
+   */
+  async clearSession(sessionId: string): Promise<void> {
+    try {
+      await this.redis.del(`session:${sessionId}`);
+    } catch (error) {
+      this.logger.error(`Error al eliminar sesión ${sessionId} de Redis: ${(error as Error).message}`);
+    }
   }
 }
