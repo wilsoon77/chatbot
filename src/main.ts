@@ -26,7 +26,7 @@ async function bootstrap() {
   });
 
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
   logger.log(`🤖 Chatbot API corriendo en http://localhost:${port}`);
   logger.log(`📋 Health check: http://localhost:${port}/health`);
   logger.log(`💬 Chat endpoint: POST http://localhost:${port}/chat`);
