@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { CryptoService } from '../../common/crypto/crypto.service.js'; // 👈 agregado
 import type { ToolDefinition } from '../../llm/llm.interfaces.js';
 import { BaseTool } from '../base.tool.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
@@ -16,6 +17,7 @@ export class WooCommerceClient {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly cryptoService: CryptoService, // 👈 agregado
   ) {
     this.defaultCurrency = this.config.get<string>('WOO_CURRENCY') || '$';
   }
@@ -29,9 +31,10 @@ export class WooCommerceClient {
 
   /**
    * Obtiene la configuración del tenant desde la base de datos.
+   * Descifra las credenciales de WooCommerce antes de retornarlas.
    */
   private async getTenantConfig(tenantId: string) {
-    const tenant = await this.prisma.tenant.findUnique({
+    const tenant = await this.prisma.tenant.findUnique({ // 👈 reemplaza this.tenantsService
       where: { id: tenantId },
     });
 
@@ -49,7 +52,12 @@ export class WooCommerceClient {
       );
     }
 
-    return tenant;
+    // Descifrar credenciales antes de usarlas
+    return {
+      ...tenant,
+      consumerKey: this.cryptoService.decrypt(tenant.consumerKey),     // 👈 agregado
+      consumerSecret: this.cryptoService.decrypt(tenant.consumerSecret), // 👈 agregado
+    };
   }
 
   /**
@@ -205,8 +213,6 @@ export class BuscarProductosTool extends BaseTool {
       return 'Error: falta tenant_id.';
     }
 
-    // Si la búsqueda viene de la API, pedimos un volumen ligeramente mayor (x3)
-    // para poder realizar el filtro inteligente localmente y aún así retornar suficientes resultados
     const requestLimit = query.length <= 4 ? limite * 3 : limite;
 
     const params: Record<string, string> = {
@@ -238,19 +244,12 @@ export class BuscarProductosTool extends BaseTool {
         return `No se encontraron productos para "${query}".`;
       }
 
-      // Filtro de palabra completa inteligente (Word Boundary / Límites de palabra)
-      // Evita falsos positivos como que "RAM" coincida con "programa" o "herramientas".
       if (query.length > 0) {
-        // Escapar caracteres regex especiales en la query del usuario
         const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        // Regex de límites de palabras para la query, insensible a mayúsculas/minúsculas
         const wordReg = new RegExp(`\\b${escapedQuery}\\b`, 'i');
 
         const filtered = products.filter((p) => wordReg.test(p.name));
-        
-        // Si el filtro estricto por palabras completas nos deja resultados, lo usamos.
-        // Si no queda nada (por ejemplo, porque es una palabra recortada), caemos al listado original
-        // para no romper la experiencia en búsquedas incompletas.
+
         if (filtered.length > 0) {
           products = filtered.slice(0, limite);
         } else {
@@ -321,7 +320,7 @@ export class VerStockTool extends BaseTool {
 
     try {
       const p = await this.wooClient.get<WooProduct>(tenantId, `products/${productId}`);
-      
+
       const stockInfo = {
         id: p.id,
         nombre: p.name,
@@ -384,7 +383,6 @@ export class VerEstadoPedidoTool extends BaseTool {
     try {
       const order = await this.wooClient.get<WooOrder>(tenantId, `orders/${orderId}`);
 
-      // Validación estricta de seguridad: El correo provisto debe coincidir con el del pedido
       const billingEmail = String(order.billing?.email || '').trim().toLowerCase();
       if (billingEmail !== email) {
         this.logger.warn(`Intento de acceso denegado a orden ${orderId}: correo "${email}" no coincide con "${billingEmail}"`);
@@ -494,9 +492,6 @@ export class AgregarAlCarritoTool extends BaseTool {
       return 'Error: El ID del producto no es válido.';
     }
 
-    // Esta herramienta responde con una confirmación que el LLM transmitirá al usuario.
-    // La acción real de inyectar en el carrito se interceptará en el flujo del ChatService
-    // y se enviará en los metadatos HTTP para que el frontend (React) la ejecute en local.
     const resultPayload = {
       status: 'pending_client_action',
       producto_id: productId,
