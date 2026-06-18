@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ChatBubble } from './components/ChatBubble.tsx';
 import { ChatWindow } from './components/ChatWindow.tsx';
-import { sendChatMessage } from './services/chat.api.ts';
+import { sendChatMessage, sendChatMessageStream } from './services/chat.api.ts';
 import type { Message } from './services/chat.api.ts';
 import type { WooProductItem } from './components/ProductCard.tsx';
 
@@ -91,49 +91,138 @@ export default function App({ tenant, color, botName, avatarUrl }: AppProps) {
     setIsTyping(true);
 
     try {
-      // 3. Enviar consulta HTTP al backend de NestJS
-      const res = await sendChatMessage(tenant, sessionId, text);
+      // 3. Intentar procesar con streaming (SSE)
+      let hasStartedAssistantMessage = false;
+      const assistantMsgIndex = updatedMessages.length;
 
-      // 4. Agregar respuesta del bot al chat
-      const assistantMsg: Message = { role: 'assistant', content: res.reply };
-      const newMessages = [...updatedMessages, assistantMsg];
-      
-      const newProducts = { ...products };
-      
-      // Asocia metadatos de productos estructurados si la respuesta del API los incluye
-      if ((res as any).products && Array.isArray((res as any).products)) {
-        newProducts[newMessages.length - 1] = (res as any).products;
-      }
+      await sendChatMessageStream(
+        tenant,
+        sessionId,
+        text,
+        // Al recibir un token de texto
+        (token) => {
+          if (!hasStartedAssistantMessage) {
+            hasStartedAssistantMessage = true;
+            setIsTyping(false); // Quitar typing indicator tan pronto como inicie el texto
 
-      // Procesa acciones del cliente si vienen indicadas (ej: agregar_al_carrito)
-      if ((res as any).action) {
-        const action = (res as any).action;
-        if (action.type === 'add_to_cart') {
-          // Desencadena un evento personalizado en el DOM global (fuera del Shadow DOM)
-          // para que el sitio anfitrión de WordPress intercepte la acción y añada al carrito
-          const event = new CustomEvent('chatbot:add_to_cart', {
-            bubbles: true,
-            detail: {
-              productId: action.payload.productId,
-              quantity: action.payload.quantity,
-            },
+            const initialMsg: Message = {
+              role: 'assistant',
+              content: token,
+              isStreaming: true,
+            };
+            setMessages((prev) => [...prev, initialMsg]);
+          } else {
+            setMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant') {
+                next[next.length - 1] = {
+                  ...last,
+                  content: last.content + token,
+                };
+              }
+              return next;
+            });
+          }
+        },
+        // Al recibir productos recomendados
+        (foundProducts) => {
+          setProducts((prev) => {
+            const next = { ...prev };
+            next[assistantMsgIndex] = foundProducts;
+            return next;
           });
-          window.dispatchEvent(event);
+        },
+        // Al recibir una acción automatizada
+        (action) => {
+          if (action && action.type === 'add_to_cart') {
+            const event = new CustomEvent('chatbot:add_to_cart', {
+              bubbles: true,
+              detail: {
+                productId: action.payload.productId,
+                quantity: action.payload.quantity,
+              },
+            });
+            window.dispatchEvent(event);
+          }
         }
-      }
+      );
 
-      setMessages(newMessages);
-      setProducts(newProducts);
-      saveToLocal(newMessages, newProducts);
-    } catch (error) {
-      console.error('Error al enviar mensaje:', error);
-      const errorMsg: Message = {
-        role: 'assistant',
-        content: 'Lo siento, en este momento tengo dificultades para conectarme. Por favor, intenta de nuevo más tarde.'
-      };
-      setMessages([...updatedMessages, errorMsg]);
-    } finally {
-      setIsTyping(false);
+      // Una vez finalizado el stream con éxito
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'assistant') {
+          next[next.length - 1] = {
+            ...last,
+            isStreaming: false, // Quitar el cursor parpadeante
+          };
+        }
+        
+        // Guardar la versión final del historial
+        setProducts((prevProds) => {
+          saveToLocal(next, prevProds);
+          return prevProds;
+        });
+
+        return next;
+      });
+
+    } catch (streamError) {
+      console.warn('Falló el streaming de chat o no está soportado. Usando fallback sincrónico...', streamError);
+      
+      // Asegurarse de que el typing indicator esté activo de nuevo para el fallback
+      setIsTyping(true);
+
+      // Limpiar un mensaje de asistente a medias si quedó en el estado antes de fallar
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === 'assistant' && last.isStreaming) {
+          return prev.slice(0, -1);
+        }
+        return prev;
+      });
+
+      try {
+        // 4. Fallback sincrónico
+        const res = await sendChatMessage(tenant, sessionId, text);
+
+        // Agregar respuesta del bot al chat
+        const assistantMsg: Message = { role: 'assistant', content: res.reply };
+        const newMessages = [...updatedMessages, assistantMsg];
+        
+        const newProducts = { ...products };
+        if ((res as any).products && Array.isArray((res as any).products)) {
+          newProducts[newMessages.length - 1] = (res as any).products;
+        }
+
+        if ((res as any).action) {
+          const action = (res as any).action;
+          if (action.type === 'add_to_cart') {
+            const event = new CustomEvent('chatbot:add_to_cart', {
+              bubbles: true,
+              detail: {
+                productId: action.payload.productId,
+                quantity: action.payload.quantity,
+              },
+            });
+            window.dispatchEvent(event);
+          }
+        }
+
+        setMessages(newMessages);
+        setProducts(newProducts);
+        saveToLocal(newMessages, newProducts);
+      } catch (syncError) {
+        console.error('Error en fallback sincrónico:', syncError);
+        const errorMsg: Message = {
+          role: 'assistant',
+          content: 'Lo siento, en este momento tengo dificultades para conectarme. Por favor, intenta de nuevo más tarde.'
+        };
+        setMessages([...updatedMessages, errorMsg]);
+      } finally {
+        setIsTyping(false);
+      }
     }
   };
 

@@ -78,6 +78,10 @@ export class GroqProvider implements ILlmProvider {
 
     if (openaiTools.length > 0) {
       body.tools = openaiTools;
+      // tool_choice='auto' explícito: el modelo decide si llamar tools o responder directo.
+      // (Es el default de OpenAI/Groq, pero lo dejamos explícito para documentar la intención
+      // y facilitar futuras auditorías. NO usar 'required' — forzaría tools en cada turno.)
+      body.tool_choice = 'auto';
     }
 
     try {
@@ -93,6 +97,18 @@ export class GroqProvider implements ILlmProvider {
 
       if (!response.ok) {
         const errorText = await response.text();
+        // 429 = rate limit (TPD excedido en free tier). Devolvemos mensaje graceful
+        // en lugar de propagar el error, para que el usuario reciba una respuesta útil.
+        if (response.status === 429) {
+          this.logger.warn(
+            `Groq 429 (rate limit alcanzado). Devolviendo mensaje graceful. Detalle: ${errorText.slice(0, 150)}`,
+          );
+          return {
+            text: 'El servicio está experimentando alta demanda en este momento. Por favor intenta nuevamente en unos minutos.',
+            toolCalls: [],
+            hasToolCalls: false,
+          };
+        }
         throw new Error(`Groq respondió con status ${response.status}: ${errorText}`);
       }
 
@@ -158,11 +174,119 @@ export class GroqProvider implements ILlmProvider {
     }
   }
 
+  async chatStream(messages: Message[]): Promise<AsyncGenerator<string, void, unknown>> {
+    if (!this.apiKey) {
+      throw new Error('La variable GROQ_API_KEY no está configurada.');
+    }
+
+    const openaiMessages = messages.map((msg) => ({
+      role: msg.role === 'system' ? 'system' as const : msg.role === 'user' ? 'user' as const : 'assistant' as const,
+      content: msg.content,
+    }));
+
+    const body = {
+      model: this.model,
+      messages: openaiMessages,
+      temperature: 0.1,
+      stream: true,
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 segundos de timeout
+
+    try {
+      this.logger.debug(`Enviando petición de stream a Groq (${this.model})`);
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        // 429 = rate limit. Devolvemos un stream con un mensaje graceful.
+        if (response.status === 429) {
+          this.logger.warn(
+            `Groq stream 429 (rate limit). Devolviendo mensaje graceful. Detalle: ${errorText.slice(0, 150)}`,
+          );
+          const fallbackMsg =
+            'El servicio está experimentando alta demanda en este momento. Por favor intenta nuevamente en unos minutos.';
+          const generator = async function* () {
+            yield fallbackMsg;
+          };
+          return generator();
+        }
+        throw new Error(`Groq de stream respondió con status ${response.status}: ${errorText}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('ReadableStream no disponible en Groq');
+      }
+
+      const decoder = new TextDecoder('utf-8');
+
+      const generator = async function* () {
+        let buffer = '';
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+
+              if (trimmed.startsWith('data: ')) {
+                const dataStr = trimmed.substring(6).trim();
+                if (dataStr === '[DONE]') {
+                  return;
+                }
+                try {
+                  const parsed = JSON.parse(dataStr) as {
+                    choices: Array<{
+                      delta?: {
+                        content?: string;
+                      };
+                    }>;
+                  };
+                  const content = parsed.choices[0]?.delta?.content;
+                  if (content) {
+                    yield content;
+                  }
+                } catch {
+                  // Omitir fallos en líneas parciales
+                }
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      };
+
+      return generator();
+    } catch (error) {
+      this.logger.error(`Error de stream en Groq provider: ${(error as Error).message}`);
+      throw error;
+    }
+  }
+
   getModelInfo() {
     return {
       provider: 'groq',
       model: this.model,
-      supportsStreaming: false,
+      supportsStreaming: true,
     };
   }
 }

@@ -88,6 +88,44 @@ export class GoogleProvider implements ILlmProvider {
     }
   }
 
+  async chatStream(messages: Message[]): Promise<AsyncGenerator<string, void, unknown>> {
+    const systemInstruction = messages
+      .filter((m) => m.role === 'system')
+      .map((m) => m.content)
+      .join('\n');
+
+    const contents = this.convertMessages(
+      messages.filter((m) => m.role !== 'system'),
+    );
+
+    const config: Record<string, unknown> = {};
+    if (systemInstruction) {
+      config.systemInstruction = systemInstruction;
+    }
+
+    try {
+      const responseStream = await this.client.models.generateContentStream({
+        model: this.model,
+        contents,
+        config,
+      });
+
+      const generator = async function* () {
+        for await (const chunk of responseStream) {
+          const text = chunk.text;
+          if (text) {
+            yield text;
+          }
+        }
+      };
+
+      return generator();
+    } catch (error) {
+      this.logger.error(`Error de stream en Google provider: ${(error as Error).message}`);
+      throw error;
+    }
+  }
+
   async validateConnection(): Promise<boolean> {
     try {
       const response = await this.client.models.generateContent({
@@ -125,7 +163,7 @@ export class GoogleProvider implements ILlmProvider {
       } else if (msg.role === 'assistant') {
         contents.push({
           role: 'model',
-          parts: [{ text: msg.content }],
+          parts: [{ text: msg.content ?? '' }],
         });
       } else if (msg.role === 'tool') {
         // Gemini espera functionResponse dentro de un part con rol 'user'

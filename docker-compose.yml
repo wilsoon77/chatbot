@@ -5,12 +5,12 @@ services:
     image: postgres:17
     container_name: bot_postgres
     restart: "no"
-
     environment:
       POSTGRES_USER: botuser
       POSTGRES_PASSWORD: botpass
       POSTGRES_DB: botdb
-
+    ports:
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -18,10 +18,8 @@ services:
     image: redis:7
     container_name: bot_redis
     restart: "no"
-
     ports:
       - "6379:6379"
-
     volumes:
       - redisdata:/data
 
@@ -29,29 +27,28 @@ services:
     build: .
     image: chatbot-core-app:latest
     container_name: chatbot_app
-
     dns:
       - 8.8.8.8
       - 1.1.1.1
-
     restart: "no"
-
     ports:
       - "3000:3000"
-
     env_file:
       - .env
-
     environment:
       DATABASE_URL: "postgresql://botuser:botpass@postgres:5432/botdb?schema=public"
       REDIS_URL: "redis://redis:6379"
-
     depends_on:
       - postgres
       - redis
-
     command: sh -c "npx prisma migrate deploy && node dist/src/main.js"
 
 volumes:
   pgdata:
   redisdata:
+
+networks:
+  default:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1300"

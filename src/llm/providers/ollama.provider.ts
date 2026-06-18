@@ -73,12 +73,21 @@ export class OllamaProvider implements ILlmProvider {
       body.tools = openaiTools;
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 segundos de timeout
+
     try {
       const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`Ollama respondió con status ${response.status}: ${await response.text()}`);
@@ -129,6 +138,95 @@ export class OllamaProvider implements ILlmProvider {
     }
   }
 
+  async chatStream(messages: Message[]): Promise<AsyncGenerator<string, void, unknown>> {
+    const openaiMessages = messages.map((msg) => ({
+      role: msg.role === 'system' ? 'system' as const : msg.role === 'user' ? 'user' as const : 'assistant' as const,
+      content: msg.content,
+    }));
+
+    const body = {
+      model: this.model,
+      messages: openaiMessages,
+      stream: true,
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 segundos de timeout
+
+    try {
+      const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`Ollama stream respondió con status ${response.status}: ${await response.text()}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('ReadableStream no disponible en Ollama');
+      }
+
+      const decoder = new TextDecoder('utf-8');
+
+      const generator = async function* () {
+        let buffer = '';
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+
+              if (trimmed.startsWith('data: ')) {
+                const dataStr = trimmed.substring(6).trim();
+                if (dataStr === '[DONE]') {
+                  return;
+                }
+                try {
+                  const parsed = JSON.parse(dataStr) as {
+                    choices: Array<{
+                      delta?: {
+                        content?: string;
+                      };
+                    }>;
+                  };
+                  const content = parsed.choices[0]?.delta?.content;
+                  if (content) {
+                    yield content;
+                  }
+                } catch {
+                  // Omitir fallos de parseo en líneas parciales
+                }
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      };
+
+      return generator();
+    } catch (error) {
+      this.logger.error(`Error de stream en Ollama provider: ${(error as Error).message}`);
+      throw error;
+    }
+  }
+
   async validateConnection(): Promise<boolean> {
     try {
       const response = await fetch(`${this.baseUrl}/api/tags`);
@@ -142,7 +240,7 @@ export class OllamaProvider implements ILlmProvider {
     return {
       provider: 'ollama',
       model: this.model,
-      supportsStreaming: false,
+      supportsStreaming: true,
     };
   }
 }

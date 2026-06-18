@@ -4,6 +4,9 @@ import type { Message } from '../services/chat.api.ts';
 import { ProductCard } from './ProductCard.tsx';
 import type { WooProductItem } from './ProductCard.tsx';
 import { Typing } from './Typing.tsx';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeSanitize from 'rehype-sanitize';
 
 interface ChatWindowProps {
   isOpen: boolean;
@@ -53,6 +56,8 @@ export function ChatWindow({
     }
   };
 
+  const isDisabled = isTyping || messages.some((m) => m.isStreaming);
+
   return (
     <div
       className={`chatbot-window ${isOpen ? 'open' : ''}`}
@@ -99,7 +104,18 @@ export function ChatWindow({
             <div key={index} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div className={`chatbot-message-row ${isUser ? 'user' : 'assistant'}`}>
                 <div className="chatbot-message-bubble">
-                  {msg.content}
+                  {isUser ? (
+                    msg.content
+                  ) : (
+                    <div className={`chatbot-markdown-content ${msg.isStreaming ? 'is-streaming' : ''}`}>
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        rehypePlugins={[rehypeSanitize]}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -124,15 +140,16 @@ export function ChatWindow({
         <textarea
           className="chatbot-textarea"
           rows={1}
-          placeholder="Escribe tu mensaje..."
+          placeholder={isDisabled ? 'El asistente está escribiendo...' : 'Escribe tu mensaje...'}
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
+          disabled={isDisabled}
         />
         <button
           className="chatbot-send-btn"
           onClick={handleSend}
-          disabled={!inputText.trim()}
+          disabled={!inputText.trim() || isDisabled}
           title="Enviar"
         >
           <Send size={16} />

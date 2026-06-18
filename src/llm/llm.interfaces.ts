@@ -9,7 +9,11 @@ export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface Message {
   role: MessageRole;
-  content: string;
+  /**
+   * Contenido del mensaje. Puede ser `null` cuando un mensaje `assistant`
+   * contiene únicamente `toolCalls` (sin texto), según el spec de OpenAI.
+   */
+  content: string | null;
   /** ID del tool_call al que responde (solo para role = 'tool') */
   toolCallId?: string;
   /** Nombre de la tool que generó esta respuesta (solo para role = 'tool') */
@@ -61,6 +65,9 @@ export interface LlmResponse {
 export interface ILlmProvider {
   /** Envía mensajes al LLM con tools disponibles y retorna la respuesta */
   chat(messages: Message[], tools: ToolDefinition[]): Promise<LlmResponse>;
+
+  /** Envía mensajes al LLM en modo streaming (para la generación final del texto) */
+  chatStream?(messages: Message[]): Promise<AsyncGenerator<string, void, unknown>>;
 
   /** Health check del provider — verifica que el servicio esté accesible */
   validateConnection(): Promise<boolean>;

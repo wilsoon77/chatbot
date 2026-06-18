@@ -9,6 +9,7 @@ import {
   ObtenerCategoriasTool,
   AgregarAlCarritoTool,
 } from './woocommerce/woocommerce.tool.js';
+import { ClarificationTool } from './general/clarification.tool.js';
 
 @Module({
   imports: [CryptoModule], // Importamos el CryptoModule para poder usar el CryptoService en los tools que lo requieran
@@ -19,6 +20,7 @@ import {
     VerEstadoPedidoTool,
     ObtenerCategoriasTool,
     AgregarAlCarritoTool,
+    ClarificationTool,
     ToolsRegistry,
   ],
   exports: [ToolsRegistry],

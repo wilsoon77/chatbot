@@ -64,7 +64,7 @@ ALTER TABLE public._prisma_migrations OWNER TO botuser;
 --
 
 COPY public."Tenant" (id, nombre, "systemPrompt", "woocommerceUrl", "consumerKey", "consumerSecret", "enabledTools", "redisTTL", "createdAt", "updatedAt") FROM stdin;
-cmprh438b0002fgbkqslxem5t	Tienda REAL 1	Eres un asistente experto en Cosas del HOGAR	https://wheat-stingray-888476.hostingersite.com	ck_f633b3461119f792a6b6ccc3e567895b66198745	cs_80cbb89e5ce573cb048c895964a41fc39a9e2876	{buscar_productos}	3600	2026-05-29 22:08:19.547	2026-05-29 22:08:19.547
+cmprh438b0002fgbkqslxem5t	Tienda REAL 1	Eres un asistente experto en tecnología y gadgets. Ayuda a los usuarios a buscar productos, ver stock, consultar el estado de sus pedidos y agregar productos al carrito de forma profesional.	https://wheat-stingray-888476.hostingersite.com	ck_f633b3461119f792a6b6ccc3e567895b66198745	cs_80cbb89e5ce573cb048c895964a41fc39a9e2876	{buscar_productos,ver_stock,ver_estado_pedido,obtener_categorias,agregar_al_carrito}	1800	2026-05-29 22:08:19.547	2026-05-29 22:08:19.547
 \.
 
 

@@ -8,6 +8,7 @@ import {
   ObtenerCategoriasTool,
   AgregarAlCarritoTool,
 } from './woocommerce/woocommerce.tool.js';
+import { ClarificationTool } from './general/clarification.tool.js';
 
 /**
  * Registry de tools.
@@ -25,6 +26,7 @@ export class ToolsRegistry {
     private readonly verEstadoPedido: VerEstadoPedidoTool,
     private readonly obtenerCategorias: ObtenerCategoriasTool,
     private readonly agregarAlCarrito: AgregarAlCarritoTool,
+    private readonly pedirAclaracion: ClarificationTool,
   ) {
     // Registrar todas las tools disponibles
     this.registerTool(this.buscarProductos);
@@ -32,6 +34,7 @@ export class ToolsRegistry {
     this.registerTool(this.verEstadoPedido);
     this.registerTool(this.obtenerCategorias);
     this.registerTool(this.agregarAlCarrito);
+    this.registerTool(this.pedirAclaracion);
 
     this.logger.log(
       `Tools registradas: ${Array.from(this.tools.keys()).join(', ')}`,
@@ -42,9 +45,17 @@ export class ToolsRegistry {
    * Obtiene las definiciones de tools habilitadas para un tenant.
    */
   getToolDefinitions(enabledToolNames: string[]): ToolDefinition[] {
-    return enabledToolNames
+    const definitions = enabledToolNames
       .filter((name) => this.tools.has(name))
       .map((name) => this.tools.get(name)!.getDefinition());
+
+    // Siempre agregamos la herramienta pedir_aclaracion de forma general
+    const clarificationTool = this.tools.get('pedir_aclaracion');
+    if (clarificationTool) {
+      definitions.push(clarificationTool.getDefinition());
+    }
+
+    return definitions;
   }
 
   /**
@@ -59,6 +70,22 @@ export class ToolsRegistry {
     if (!tool) {
       this.logger.error(`Tool no encontrada: ${toolName}`);
       return `Error: La herramienta "${toolName}" no está disponible.`;
+    }
+
+    // Validación de argumentos usando el esquema Zod de la herramienta
+    if (tool.inputSchema) {
+      const result = tool.inputSchema.safeParse(args);
+      if (!result.success) {
+        const errorMessages = result.error.errors
+          .map((err) => `- ${err.path.join('.')}: ${err.message}`)
+          .join('\n');
+        this.logger.warn(
+          `Validación fallida para la herramienta "${toolName}":\n${errorMessages}`,
+        );
+        return `Error de validación en los argumentos de la herramienta "${toolName}":\n${errorMessages}\nPor favor, corrige los argumentos e intenta de nuevo.`;
+      }
+      // Usar los valores parseados y validados (que incluyen coerción de tipos)
+      args = { ...args, ...result.data };
     }
 
     this.logger.debug(`Ejecutando tool: ${toolName} con args: ${JSON.stringify(args)}`);

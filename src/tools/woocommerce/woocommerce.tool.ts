@@ -4,6 +4,13 @@ import { CryptoService } from '../../common/crypto/crypto.service.js'; // 👈 a
 import type { ToolDefinition } from '../../llm/llm.interfaces.js';
 import { BaseTool } from '../base.tool.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import {
+  buscarProductosSchema,
+  verStockSchema,
+  verEstadoPedidoSchema,
+  obtenerCategoriasSchema,
+  agregarAlCarritoSchema,
+} from '../schemas/woocommerce.schemas.js';
 
 /**
  * Cliente HTTP para la API REST de WooCommerce.
@@ -94,6 +101,7 @@ export class WooCommerceClient {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       },
     });
 
@@ -162,6 +170,7 @@ interface WooCategory {
 export class BuscarProductosTool extends BaseTool {
   private readonly logger = new Logger(BuscarProductosTool.name);
   readonly name = 'buscar_productos';
+  readonly inputSchema = buscarProductosSchema;
 
   constructor(private readonly wooClient: WooCommerceClient) {
     super();
@@ -175,7 +184,10 @@ export class BuscarProductosTool extends BaseTool {
         'Usa siempre el parámetro "query" con las palabras exactas que mencionó el usuario. ' +
         'NO uses el parámetro "categoria" a menos que el usuario haya indicado explícitamente ' +
         'una categoría Y conozcas su ID numérico real en WooCommerce. ' +
-        'En caso de duda, omite "categoria" por completo — la búsqueda por "query" es suficiente.',
+        'En caso de duda, omite "categoria" por completo — la búsqueda por "query" es suficiente. ' +
+        'IMPORTANTE: NO llames esta herramienta si el usuario solo saluda, agradece, se despide o ' +
+        'pregunta "¿qué venden?"/"¿qué tienen?" (en ese caso usa `obtener_categorias`). ' +
+        'Solo úsala cuando el usuario mencione explícitamente un producto o tipo de producto a buscar.',
       parameters: {
         type: 'object',
         properties: {
@@ -193,8 +205,8 @@ export class BuscarProductosTool extends BaseTool {
               'NO inventar nombres de categorías ni convertirlos a slugs.',
           },
           limite: {
-            type: 'string',
-            description: 'Cantidad máxima de resultados a retornar (por defecto "5", máximo "10").',
+            type: 'integer',
+            description: 'Cantidad máxima de resultados a retornar (por defecto 5, máximo 10). DEBE ser un número entero sin comillas.',
           },
         },
         required: ['query'],
@@ -255,6 +267,9 @@ export class BuscarProductosTool extends BaseTool {
         } else {
           products = products.slice(0, limite);
         }
+      } else {
+        // Si la consulta es vacía (búsqueda general), recortamos al límite solicitado
+        products = products.slice(0, limite);
       }
 
       const currency = this.wooClient.getCurrencySymbol();
@@ -289,6 +304,7 @@ export class BuscarProductosTool extends BaseTool {
 export class VerStockTool extends BaseTool {
   private readonly logger = new Logger(VerStockTool.name);
   readonly name = 'ver_stock';
+  readonly inputSchema = verStockSchema;
 
   constructor(private readonly wooClient: WooCommerceClient) {
     super();
@@ -302,8 +318,8 @@ export class VerStockTool extends BaseTool {
         type: 'object',
         properties: {
           producto_id: {
-            type: 'number',
-            description: 'El ID numérico del producto (ej: 42, 107). Extraído del producto retornado previamente.',
+            type: 'integer',
+            description: 'El ID numérico del producto (ej: 42, 107). Extraído del producto retornado previamente. DEBE ser un número entero sin comillas.',
           },
         },
         required: ['producto_id'],
@@ -342,6 +358,7 @@ export class VerStockTool extends BaseTool {
 export class VerEstadoPedidoTool extends BaseTool {
   private readonly logger = new Logger(VerEstadoPedidoTool.name);
   readonly name = 'ver_estado_pedido';
+  readonly inputSchema = verEstadoPedidoSchema;
 
   constructor(private readonly wooClient: WooCommerceClient) {
     super();
@@ -358,8 +375,8 @@ export class VerEstadoPedidoTool extends BaseTool {
         type: 'object',
         properties: {
           pedido_id: {
-            type: 'number',
-            description: 'El ID numérico de la orden o pedido (ej: 1422).',
+            type: 'integer',
+            description: 'El ID numérico de la orden o pedido (ej: 1422). DEBE ser un número entero sin comillas.',
           },
           email: {
             type: 'string',
@@ -416,6 +433,7 @@ export class VerEstadoPedidoTool extends BaseTool {
 export class ObtenerCategoriasTool extends BaseTool {
   private readonly logger = new Logger(ObtenerCategoriasTool.name);
   readonly name = 'obtener_categorias';
+  readonly inputSchema = obtenerCategoriasSchema;
 
   constructor(private readonly wooClient: WooCommerceClient) {
     super();
@@ -462,6 +480,7 @@ export class ObtenerCategoriasTool extends BaseTool {
 @Injectable()
 export class AgregarAlCarritoTool extends BaseTool {
   readonly name = 'agregar_al_carrito';
+  readonly inputSchema = agregarAlCarritoSchema;
 
   getDefinition(): ToolDefinition {
     return {
@@ -471,12 +490,12 @@ export class AgregarAlCarritoTool extends BaseTool {
         type: 'object',
         properties: {
           producto_id: {
-            type: 'number',
-            description: 'El ID numérico del producto a agregar.',
+            type: 'integer',
+            description: 'El ID numérico del producto a agregar. DEBE ser un número entero sin comillas.',
           },
           cantidad: {
-            type: 'number',
-            description: 'Cantidad de unidades a agregar (por defecto 1).',
+            type: 'integer',
+            description: 'Cantidad de unidades a agregar (por defecto 1). DEBE ser un número entero sin comillas.',
           },
         },
         required: ['producto_id'],

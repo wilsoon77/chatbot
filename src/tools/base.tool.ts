@@ -1,4 +1,5 @@
 import type { ToolDefinition } from '../llm/llm.interfaces.js';
+import type { ZodSchema } from 'zod';
 
 /**
  * Clase base abstracta para todas las tools.
@@ -7,6 +8,9 @@ import type { ToolDefinition } from '../llm/llm.interfaces.js';
 export abstract class BaseTool {
   /** Nombre único de la tool (ej: "buscar_productos") */
   abstract readonly name: string;
+
+  /** Esquema de validación Zod para los argumentos de la tool (opcional) */
+  readonly inputSchema?: ZodSchema;
 
   /** Definición de la tool para enviar al LLM */
   abstract getDefinition(): ToolDefinition;
