@@ -1,0 +1,150 @@
+/* ── Layout split ── */
+.login-page {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Panel izquierdo (marca) ── */
+.login-page__brand {
+  flex: 1;
+  background: var(--color-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Glow fondo */
+.login-page__brand::before {
+  content: '';
+  position: absolute;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.login-page__brand-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+/* LOGO */
+.login-page__logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-page__logo-image {
+  width: 60cd0px;
+  max-width: 70%;
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.4));
+}
+
+/* ── Panel derecho (form) ── */
+.login-page__form-panel {
+  flex: 1;
+  background: var(--color-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+}
+
+.login-page__card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--color-card);
+  border-radius: var(--radius-lg);
+  padding: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+}
+
+.login-page__card-header {
+  margin-bottom: 32px;
+}
+
+.login-page__title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+.login-page__subtitle {
+  font-size: 14px;
+  color: var(--color-subtext);
+}
+
+/* ── Formulario (igual lo dejas) ── */
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.login-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-form__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-subtext);
+}
+
+.login-form__input {
+  background: var(--color-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--color-text);
+  outline: none;
+}
+
+.login-form__input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.login-form__btn {
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 13px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .login-page {
+    flex-direction: column;
+  }
+
+  .login-page__brand {
+    padding: 40px 24px;
+  }
+
+  .login-page__logo-image {
+    width: 140px;
+  }
+
+  .login-page__card {
+    padding: 28px 20px;
+  }
+}

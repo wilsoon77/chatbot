@@ -2,7 +2,9 @@
 FROM node:20-alpine AS widget-builder
 WORKDIR /app/widget
 COPY widget/package*.json ./
-RUN npm install
+RUN npm config set fetch-timeout 600000 && \
+    npm config set fetch-retries 5 && \
+    npm install
 COPY widget/ ./
 RUN npm run build
 
@@ -10,7 +12,9 @@ RUN npm run build
 FROM node:20-alpine AS backend-builder
 WORKDIR /app
 COPY package*.json tsconfig*.json tsconfig.build.json nest-cli.json ./
-RUN npm install
+RUN npm config set fetch-timeout 600000 && \
+    npm config set fetch-retries 5 && \
+    npm install
 COPY prisma.config.ts ./
 COPY prisma/ ./prisma/
 ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
@@ -24,7 +28,9 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm config set fetch-timeout 600000 && \
+    npm config set fetch-retries 5 && \
+    npm install --omit=dev
 COPY prisma.config.ts ./
 COPY prisma/ ./prisma/
 COPY --from=backend-builder /app/node_modules/@prisma/client ./node_modules/@prisma/client

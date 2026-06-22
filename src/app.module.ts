@@ -10,6 +10,8 @@ import { PrismaModule } from './prisma/prisma.module.js';
 
 import { HealthController } from './common/health/health.controller.js';
 
+import { AuthModule } from './auth/auth.module.js';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -32,6 +34,7 @@ import { HealthController } from './common/health/health.controller.js';
     LlmModule,
     TenantsModule,
     PrismaModule,
+    AuthModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -41,4 +44,4 @@ import { HealthController } from './common/health/health.controller.js';
     },
   ],
 })
-export class AppModule {}
+export class AppModule {}

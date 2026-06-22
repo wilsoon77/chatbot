@@ -1,0 +1,27 @@
+:root {
+  --color-bg: #050816;
+
+  --color-sidebar: rgba(15, 23, 42, 0.75);
+
+  --color-card: rgba(17, 25, 40, 0.85);
+
+  --color-border: rgba(255, 255, 255, 0.08);
+
+  --color-text: #f8fafc;
+
+  --color-subtext: #94a3b8;
+
+  --color-primary: #3b82f6;
+
+  --color-secondary: #8b5cf6;
+
+  --color-accent: #38bdf8;
+
+  --radius-sm: 12px;
+  --radius-md: 18px;
+  --radius-lg: 24px;
+
+  --shadow-glow: 0 0 30px rgba(59, 130, 246, 0.15);
+
+  --font-sans: 'Inter', sans-serif;
+}

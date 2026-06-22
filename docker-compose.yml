@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   postgres:
     image: postgres:17
@@ -14,6 +12,13 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+    # 🔥 HEALTHCHECK (clave para production)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U botuser -d botdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   redis:
     image: redis:7
     container_name: bot_redis
@@ -27,21 +32,43 @@ services:
     build: .
     image: chatbot-core-app:latest
     container_name: chatbot_app
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
-    restart: "no"
+
     ports:
       - "3000:3000"
+
     env_file:
       - .env
+
     environment:
-      DATABASE_URL: "postgresql://botuser:botpass@postgres:5432/botdb?schema=public"
-      REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: postgresql://botuser:botpass@postgres:5432/botdb?schema=public
+      REDIS_URL: redis://redis:6379
+
     depends_on:
-      - postgres
-      - redis
-    command: sh -c "npx prisma migrate deploy && node dist/src/main.js"
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+    command: >
+      sh -c "npx prisma migrate deploy && node dist/src/main.js"
+
+  admin:
+    build: ./admin
+    container_name: chatbot_admin
+    restart: "no"
+
+    ports:
+      - "5173:5173"
+
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+
+    volumes:
+      - ./admin:/app
+      - /app/node_modules
+
+    depends_on:
+      - app
 
 volumes:
   pgdata:
