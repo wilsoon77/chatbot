@@ -1,0 +1,214 @@
+/* Breadcrumb */
+.new-tenant__breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--color-subtext);
+}
+
+.new-tenant__back {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.new-tenant__back:hover { text-decoration: underline; }
+
+.new-tenant__breadcrumb-sep { color: var(--color-border); }
+
+/* Form container */
+.new-tenant__form {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.new-tenant__title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.new-tenant__subtitle {
+  font-size: 14px;
+  color: var(--color-subtext);
+  margin: -16px 0 0;
+}
+
+/* Field */
+.nt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nt-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-subtext);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nt-required { color: #f87171; }
+
+.nt-hint {
+  font-size: 12px;
+  color: var(--color-subtext);
+  opacity: 0.7;
+  margin: 0;
+}
+
+/* Counter */
+.nt-counter {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-subtext);
+}
+
+.nt-counter--over { color: #f87171; font-weight: 600; }
+
+/* Inputs */
+.nt-input,
+.nt-textarea {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--color-text);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.nt-input::placeholder,
+.nt-textarea::placeholder { color: rgba(148,163,184,0.4); }
+
+.nt-input:focus,
+.nt-textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+
+.nt-field--error .nt-input,
+.nt-field--error .nt-textarea {
+  border-color: rgba(248,113,113,0.5);
+}
+
+.nt-textarea { resize: vertical; min-height: 180px; line-height: 1.6; }
+
+.nt-input--mono { font-family: monospace; font-size: 13px; }
+
+.nt-input--short { max-width: 160px; }
+
+/* Row de dos columnas */
+.nt-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 600px) { .nt-row { grid-template-columns: 1fr; } }
+
+/* Error text */
+.nt-error {
+  font-size: 12px;
+  color: #f87171;
+  margin: 0;
+}
+
+/* Tools */
+.nt-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nt-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-subtext);
+  transition: all 0.15s;
+}
+
+.nt-tool:hover {
+  border-color: rgba(59,130,246,0.4);
+  color: var(--color-text);
+}
+
+.nt-tool--active {
+  background: rgba(59,130,246,0.12);
+  border-color: rgba(59,130,246,0.4);
+  color: var(--color-accent);
+}
+
+.nt-tool__check {
+  font-size: 12px;
+  width: 16px;
+  text-align: center;
+}
+
+/* API error */
+.nt-api-error {
+  background: rgba(248,113,113,0.08);
+  border: 1px solid rgba(248,113,113,0.2);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 13px;
+  color: #f87171;
+}
+
+/* Actions */
+.nt-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-top: 8px;
+}
+
+.nt-btn-cancel {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 20px;
+  font-size: 14px;
+  color: var(--color-subtext);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.nt-btn-cancel:hover { background: rgba(255,255,255,0.04); }
+
+.nt-btn-submit {
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.nt-btn-submit:hover:not(:disabled) { background: #2563eb; }
+.nt-btn-submit:active:not(:disabled) { transform: scale(0.97); }
+.nt-btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }

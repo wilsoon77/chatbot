@@ -1,0 +1,255 @@
+/* Header actions */
+.tenants__header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.tenants__btn-refresh {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--color-subtext);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tenants__btn-refresh:hover {
+  background: rgba(255,255,255,0.05);
+  color: var(--color-text);
+}
+
+.tenants__btn-new {
+  background: var(--color-primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.tenants__btn-new:hover {
+  background: #2563eb;
+}
+
+.tenants__btn-new:active {
+  transform: scale(0.97);
+}
+
+/* Estados */
+.tenants__state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 60px 0;
+  color: var(--color-subtext);
+  font-size: 14px;
+}
+
+.tenants__state--error {
+  color: #f87171;
+}
+
+.tenants__spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(59, 130, 246, 0.2);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Empty state */
+.tenants__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 80px 0;
+  text-align: center;
+}
+
+.tenants__empty-icon {
+  font-size: 56px;
+  opacity: 0.4;
+}
+
+.tenants__empty h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.tenants__empty p {
+  font-size: 14px;
+  color: var(--color-subtext);
+}
+
+/* Grid de cards */
+.tenants__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 20px;
+}
+
+/* Tenant Card */
+.tenant-card {
+  background: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  transition: border-color 0.2s, transform 0.15s;
+}
+
+.tenant-card:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+  transform: translateY(-2px);
+}
+
+.tenant-card__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tenant-card__icon {
+  font-size: 28px;
+  flex-shrink: 0;
+}
+
+.tenant-card__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.tenant-card__name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tenant-card__id {
+  font-size: 11px;
+  color: var(--color-subtext);
+  font-family: monospace;
+}
+
+.tenant-card__badge {
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--color-accent);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.tenant-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 16px;
+}
+
+.tenant-card__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.tenant-card__label {
+  font-size: 12px;
+  color: var(--color-subtext);
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.tenant-card__value {
+  font-size: 13px;
+  color: var(--color-text);
+  text-align: right;
+  word-break: break-all;
+}
+
+.tenant-card__value--prompt {
+  font-size: 12px;
+  color: var(--color-subtext);
+  font-style: italic;
+  text-align: right;
+}
+
+.tenant-card__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.tenant-card__tool {
+  background: rgba(139, 92, 246, 0.12);
+  color: var(--color-secondary);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tenant-card__footer {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 16px;
+}
+
+.tenant-card__btn {
+  flex: 1;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s;
+}
+
+.tenant-card__btn--edit {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--color-primary);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.tenant-card__btn--edit:hover {
+  background: rgba(59, 130, 246, 0.22);
+}
+
+.tenant-card__btn--delete {
+  background: rgba(248, 113, 113, 0.08);
+  color: #f87171;
+  border: 1px solid rgba(248, 113, 113, 0.2);
+}
+
+.tenant-card__btn--delete:hover {
+  background: rgba(248, 113, 113, 0.16);
+}
