@@ -7,6 +7,8 @@ import type {
   LlmResponse,
   ToolCall,
 } from '../llm.interfaces.js';
+import { coerceNumericArgs } from '../utils/coerce-args.js';
+import { resolveTemperature } from '../utils/model-params.js';
 
 /**
  * Provider para Groq.
@@ -73,7 +75,8 @@ export class GroqProvider implements ILlmProvider {
     const body: Record<string, unknown> = {
       model: this.model,
       messages: openaiMessages,
-      temperature: 0.1, // Baja temperatura para comportamiento consistente de herramientas
+      // Temperatura consistente entre providers (ver utils/model-params.ts).
+      temperature: resolveTemperature(),
     };
 
     if (openaiTools.length > 0) {
@@ -136,7 +139,9 @@ export class GroqProvider implements ILlmProvider {
         const toolCalls: ToolCall[] = assistantMessage.tool_calls.map((tc) => ({
           id: tc.id,
           name: tc.function.name,
-          args: JSON.parse(tc.function.arguments) as Record<string, unknown>,
+          args: this.coerceNumericArgs(
+            JSON.parse(tc.function.arguments) as Record<string, unknown>,
+          ),
         }));
 
         this.logger.debug(`Groq solicitó tool calls: ${toolCalls.map((tc) => tc.name).join(', ')}`);
@@ -158,6 +163,14 @@ export class GroqProvider implements ILlmProvider {
       throw error;
     }
   }
+
+  /**
+   * Coerce string-wrapped numbers to actual numbers in tool call arguments.
+   * LLMs sometimes generate {"producto_id": "123"} instead of {"producto_id": 123}.
+   * Implementación movida al helper compartido `src/llm/utils/coerce-args.ts`
+   * para que todos los providers apliquen la misma normalización.
+   */
+  private coerceNumericArgs = coerceNumericArgs;
 
   async validateConnection(): Promise<boolean> {
     if (!this.apiKey) return false;
@@ -187,7 +200,7 @@ export class GroqProvider implements ILlmProvider {
     const body = {
       model: this.model,
       messages: openaiMessages,
-      temperature: 0.1,
+      temperature: resolveTemperature(),
       stream: true,
     };
 

@@ -8,7 +8,17 @@ import type { Message } from '../llm/llm.interfaces.js';
 import { InputGuardService } from '../guardrails/input-guard.service.js';
 import { OutputGuardService } from '../guardrails/output-guard.service.js';
 import { IntentRouterService } from './intent-router.service.js';
+import type { IntentClassification } from './intent-router.service.js';
 import { HistoryWindowService } from './history-window.service.js';
+import { buildSystemPrompt } from './prompts/system-prompt.template.js';
+
+/**
+ * Prefijo del mensaje de contexto de productos que inyecta
+ * `filterHistoryForPersistence`. Se usa para detectar si en el historial hay
+ * productos mostrados recientemente (punto 3 de la política: resolución de
+ * referencias multi-turno).
+ */
+const PRODUCT_CONTEXT_PREFIX = '[Contexto interno — productos mostrados al usuario]';
 
 /**
  * ChatService — Orquestador del Agentic Loop (Sincrónico y Streaming).
@@ -72,11 +82,17 @@ export class ChatService {
       history,
       cleanUserMessage,
       tenant.nombre,
+      tenant.enabledTools,
     );
 
     // ── Router de intención: small-talk puro se responde SIN tools ───────
     const intent = this.intentRouter.classifyWithLog(cleanUserMessage);
-    if (!intent.needsTools) {
+    // Cambio 3: las respuestas cortas ("sí/ok/vale") sin acción pendiente se
+    // responden directo, sin entrar al agentic loop.
+    const hasProductContext = this.hasRecentProductContext(history);
+    const skipToolsForShortAnswer =
+      intent.isShortAnswer && !hasProductContext;
+    if (!intent.needsTools || skipToolsForShortAnswer) {
       this.logger.log(
         `Small-talk detectado (intent="${intent.intent}") — respondiendo SIN tools`,
       );
@@ -99,6 +115,7 @@ export class ChatService {
         messages,
         lastFoundProductsContainer,
         pendingActionContainer,
+        intent,
       );
     } catch (e) {
       // Guardar historial acumulado hasta el momento del error (excluyendo prompt de sistema)
@@ -121,7 +138,7 @@ export class ChatService {
     messages.push(assistantMsg);
 
     // Guardar historial completo al final
-    const historyToSave = this.filterHistoryForPersistence(messages);
+    const historyToSave = this.filterHistoryForPersistence(messages, lastFoundProductsContainer.products);
     await this.sessionService.saveHistory(sessionId, historyToSave);
 
     return {
@@ -170,11 +187,16 @@ export class ChatService {
       history,
       cleanUserMessage,
       tenant.nombre,
+      tenant.enabledTools,
     );
 
     // ── Router de intención: small-talk puro → streaming real SIN tools ──
     const intent = this.intentRouter.classifyWithLog(cleanUserMessage);
-    if (!intent.needsTools) {
+    // Cambio 3: respuestas cortas sin acción pendiente → directo sin tools.
+    const hasProductContext = this.hasRecentProductContext(history);
+    const skipToolsForShortAnswer =
+      intent.isShortAnswer && !hasProductContext;
+    if (!intent.needsTools || skipToolsForShortAnswer) {
       this.logger.log(
         `Small-talk detectado (intent="${intent.intent}") — streaming SIN tools`,
       );
@@ -219,6 +241,7 @@ export class ChatService {
         messages,
         lastFoundProductsContainer,
         pendingActionContainer,
+        intent,
       );
     } catch (e) {
       // Guardar historial acumulado hasta el momento del error (excluyendo prompt de sistema)
@@ -274,7 +297,7 @@ export class ChatService {
     messages.push(assistantMsg);
 
     // Guardar historial completo al final
-    const historyToSave = this.filterHistoryForPersistence(messages);
+    const historyToSave = this.filterHistoryForPersistence(messages, lastFoundProductsContainer.products);
     await this.sessionService.saveHistory(sessionId, historyToSave);
   }
 
@@ -283,28 +306,151 @@ export class ChatService {
   // ───────────────────────────────────────────────────────────────────────
 
   /**
+   * Indica si el historial reciente contiene un mensaje de contexto de
+   * productos inyectado por `filterHistoryForPersistence`. Se usa para decidir
+   * si una respuesta corta ("sí", "ok") puede resolverse directamente (no hay
+   * acción pendiente) o si debe entrar al agentic loop (hay productos
+   * mostrados sobre los que actuar).
+   *
+   * Solo se considera el contexto "reciente": se miran los últimos
+   * `RECENT_WINDOW` mensajes para no reaccionar a productos mostrados hace
+   * muchos turnos.
+   */
+  private hasRecentProductContext(history: Message[]): boolean {
+    const RECENT_WINDOW = 6;
+    const slice = history.slice(-RECENT_WINDOW);
+    return slice.some(
+      (m) =>
+        typeof m.content === 'string' &&
+        m.content.startsWith(PRODUCT_CONTEXT_PREFIX),
+    );
+  }
+
+  /**
+   * Extrae un término de búsqueda a partir del último mensaje del usuario.
+   * Heurística simple (sin LLM): toma el contenido del último `role: 'user'`,
+   * elimina stopwords/verbos de acción comunes en español, y devuelve la
+   * primera palabra significativa restante (o la cadena completa si sobra
+   * poco). Se usa en el guard de existencia para forzar una búsqueda sintética.
+   *
+   * Devuelve null si no se pudo extraer un término útil.
+   */
+  private extractSearchQuery(messages: Message[]): string | null {
+    // Último mensaje del usuario (ignorando el system de contexto previo).
+    let userText = '';
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user' && typeof messages[i].content === 'string') {
+        userText = messages[i].content as string;
+        break;
+      }
+    }
+    if (!userText) return null;
+
+    // Stopwords / verbos de acción que NO aportan a la búsqueda.
+    const stopwords =
+      /^(?:quiero|busc[aá]r?|busco|necesito|ver|tienen|hay|alguno|alguna|algunos|algunas|un|una|unos|unas|el|la|los|las|de|del|para|por\s+favor|me\s+pueden|me\s+puedes|dame|muestra|mostrar|comprar|precio|cu[aá]nto|cuesta|vale|cual|cu[aá]l)\b/gi;
+
+    const cleaned = userText
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ') // solo letras/números/espacios
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(stopwords, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!cleaned) return null;
+
+    // Si queda multi-palabra, la tool ya hace fallback a la primera palabra;
+    // pasamos el término limpio completo para que su post-filter por tokens
+    // funcione mejor.
+    return cleaned;
+  }
+
+  /**
+   * Ejecuta una `buscar_productos` sintética y empuja los mensajes al array
+   * (assistant tool-call + tool result) para que el LLM, en la siguiente
+   * iteración del loop, vea el resultado de la búsqueda y responda en base a él.
+   *
+   * Es el mecanismo determinista del guard de existencia: garantiza que la
+   * búsqueda ocurre sin depender de que el LLM decida llamarla.
+   */
+  private async injectSyntheticSearch(
+    tenantId: string,
+    query: string,
+    messages: Message[],
+    lastFoundProductsContainer: { products?: any[] },
+  ): Promise<void> {
+    const callId = `synth_search_${Date.now()}`;
+
+    // Mensaje assistant simulando la llamada a la herramienta.
+    const assistantToolMsg: Message = {
+      role: 'assistant',
+      content: null,
+      toolCalls: [{ id: callId, name: 'buscar_productos', args: { query } }],
+    };
+    messages.push(assistantToolMsg);
+
+    // Ejecución real de la herramienta.
+    const result = await this.toolsRegistry.executeTool('buscar_productos', {
+      query,
+      tenant_id: tenantId,
+    });
+
+    // Indexar resultados reales para el widget (igual que la intercepción normal).
+    try {
+      const parsed = JSON.parse(result);
+      let products: any[] | null = null;
+      if (Array.isArray(parsed)) {
+        products = parsed;
+      } else if (parsed && parsed.status === 'partial_match' && Array.isArray(parsed.productos)) {
+        products = parsed.productos;
+      }
+
+      if (products && products.length > 0) {
+        lastFoundProductsContainer.products = products;
+      }
+    } catch {
+      // Ignora fallos de parseo
+    }
+
+    const toolResultMsg: Message = {
+      role: 'tool',
+      content: result,
+      toolCallId: callId,
+      toolName: 'buscar_productos',
+    };
+    messages.push(toolResultMsg);
+  }
+
+  /**
    * Filtra el array de mensajes antes de persistirlo en Redis.
    *
    * Se excluyen:
    *  - Mensajes `system` (el prompt se reinyecta en cada turno desde la BD).
-   *  - Mensajes `tool` (contienen JSON crudo de resultados; muy ruidosos y
-   *    confunden al modelo en turnos largos).
+   *  - Mensajes `tool` (contienen JSON crudo de resultados).
    *  - Mensajes `assistant` que solo contienen `toolCalls` sin contenido de
-   *    texto final (el mensaje sintético "[Llamando herramientas: ...]").
+   *    texto final.
    *
    * Se conservan:
    *  - Mensajes `user`.
    *  - Mensajes `assistant` con `content` de texto real (la respuesta final).
+   *
+   * Adicionalmente, si hubo resultados de buscar_productos, se inyecta un
+   * mensaje de contexto compacto con los IDs y nombres de productos encontrados,
+   * para que el LLM pueda referenciarlos en turnos posteriores.
    */
-  private filterHistoryForPersistence(messages: Message[]): Message[] {
-    return messages.filter((msg) => {
+  private filterHistoryForPersistence(
+    messages: Message[],
+    lastFoundProducts?: any[],
+  ): Message[] {
+    const filtered = messages.filter((msg) => {
       if (msg.role === 'system') return false;
       if (msg.role === 'tool') return false;
       // Assistant: conservar solo si tiene contenido de texto real (no solo toolCalls)
       if (msg.role === 'assistant') {
         const hasTextContent =
           typeof msg.content === 'string' && msg.content.trim().length > 0;
-        // Excluir el mensaje sintético de "Llamando herramientas"
+        // Excluir mensajes que solo son toolCalls sin texto
         const isSyntheticToolCall =
           msg.toolCalls &&
           msg.toolCalls.length > 0 &&
@@ -314,6 +460,28 @@ export class ChatService {
       }
       return true;
     });
+
+    // Inyectar contexto compacto de productos encontrados para referencia futura.
+    // Se guarda como mensaje 'assistant' especial justo antes del último mensaje.
+    if (lastFoundProducts && lastFoundProducts.length > 0) {
+      const compact = lastFoundProducts.map((p: any) => ({
+        id: p.id,
+        nombre: p.nombre,
+      }));
+      const contextMsg: Message = {
+        role: 'assistant',
+        content: `[Contexto interno — productos mostrados al usuario]: ${JSON.stringify(compact)}`,
+      };
+      // Insertar antes del último mensaje (que es la respuesta del asistente)
+      const lastMsg = filtered[filtered.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant') {
+        filtered.splice(filtered.length - 1, 0, contextMsg);
+      } else {
+        filtered.push(contextMsg);
+      }
+    }
+
+    return filtered;
   }
 
   /**
@@ -326,14 +494,20 @@ export class ChatService {
    * solo los mensajes recientes + el resumen.
    */
   private async buildBaseMessages(
-    systemPrompt: string,
+    tenantPrompt: string,
     history: Message[],
     userMessage: string,
     tenantName: string,
+    enabledTools: string[],
   ): Promise<Message[]> {
     const windowed = await this.historyWindow.applyWindow(history, tenantName);
     const messages: Message[] = [];
-    messages.push({ role: 'system', content: systemPrompt });
+    // El system prompt final combina la persona del tenant (BD) con el bloque
+    // fijo de política de uso de herramientas (ver prompts/system-prompt.template.ts).
+    messages.push({
+      role: 'system',
+      content: buildSystemPrompt(tenantPrompt, tenantName, enabledTools),
+    });
     // Los mensajes de la ventana (que pueden incluir un system de contexto previo).
     for (const msg of windowed.messages) {
       messages.push(msg);
@@ -353,9 +527,13 @@ export class ChatService {
     messages: Message[],
     lastFoundProductsContainer: { products?: any[] },
     pendingActionContainer: { action?: any },
+    intent: IntentClassification,
   ): Promise<string | null> {
     const toolDefinitions = this.toolsRegistry.getToolDefinitions(tenant.enabledTools);
     let toolCallCount = 0;
+    // Estado por turno: si ya se ejecutó buscar_productos (lo usa el guard de
+    // existencia para forzar una búsqueda antes de permitir pedir_aclaracion).
+    let searchAttempted = false;
 
     while (true) {
       this.logger.debug(
@@ -430,10 +608,6 @@ export class ChatService {
           try {
             const parsed = JSON.parse(result);
             if (parsed.status === 'pending_clarification') {
-              this.logger.debug(
-                `Cortocircuitando agentic loop por aclaración: "${parsed.pregunta}"`,
-              );
-              
               const toolResultMsg: Message = {
                 role: 'tool',
                 content: result,
@@ -441,7 +615,44 @@ export class ChatService {
                 toolName: toolCall.name,
               };
               messages.push(toolResultMsg);
-              
+
+              // ── GUARD DE EXISTENCIA (Cambio C) ───────────────────────────
+              // Si el usuario pidió buscar un producto pero el LLM intenta pedir
+              // aclaración SIN haber buscado antes, forzamos una búsqueda
+              // sintética determinista. Así garantizamos que siempre se verifica
+              // la existencia del producto antes de preguntar detalles.
+              if (intent.isProductSearch && !searchAttempted && tenant.enabledTools.includes('buscar_productos')) {
+                const synthQuery = this.extractSearchQuery(messages);
+                if (synthQuery) {
+                  this.logger.warn(
+                    `pedir_aclaracion bloqueado por guard de existencia — forzando búsqueda sintética ` +
+                      `con query="${synthQuery}". Pregunta del modelo que se descarta: "${parsed.pregunta}"`,
+                  );
+                  await this.injectSyntheticSearch(
+                    tenant.id,
+                    synthQuery,
+                    messages,
+                    lastFoundProductsContainer,
+                  );
+                  searchAttempted = true;
+                  continue;
+                }
+              }
+
+              // Protección (Cambio 2): si hay productos mostrados en el contexto
+              // reciente, el modelo probablemente está pidiendo un ID que ya
+              // tiene. En lugar de cortocircuitar, se deja que el loop itere.
+              if (this.hasRecentProductContext(messages)) {
+                this.logger.warn(
+                  `pedir_aclaracion invocado con contexto de productos presente — no se cortocircuita, ` +
+                    `se deja iterar al loop para resolver el ID del contexto. Pregunta del modelo: "${parsed.pregunta}"`,
+                );
+                continue;
+              }
+
+              this.logger.debug(
+                `Cortocircuitando agentic loop por aclaración: "${parsed.pregunta}"`,
+              );
               return parsed.pregunta;
             }
           } catch (e) {
@@ -451,10 +662,22 @@ export class ChatService {
 
         // Intercepta e indexa metadatos de productos para el widget
         if (toolCall.name === 'buscar_productos') {
+          searchAttempted = true;
           try {
             const parsed = JSON.parse(result);
+            // Solo llenar el container (carousel del widget) si hubo resultados
+            // reales (array u objeto con status "partial_match" conteniendo productos).
+            // El envelope { status: 'no_results' } no es un array
+            // y no debe mostrarse como carousel vacío.
+            let products: any[] | null = null;
             if (Array.isArray(parsed)) {
-              lastFoundProductsContainer.products = parsed;
+              products = parsed;
+            } else if (parsed && parsed.status === 'partial_match' && Array.isArray(parsed.productos)) {
+              products = parsed.productos;
+            }
+
+            if (products && products.length > 0) {
+              lastFoundProductsContainer.products = products;
             }
           } catch (e) {
             // Ignora fallos de parseo

@@ -8,6 +8,7 @@ import type {
   LlmResponse,
   ToolCall,
 } from '../llm.interfaces.js';
+import { resolveTemperature } from '../utils/model-params.js';
 
 /**
  * Provider de Google Gemini.
@@ -46,12 +47,18 @@ export class GoogleProvider implements ILlmProvider {
       this.convertToolDefinition(tool),
     );
 
-    const config: Record<string, unknown> = {};
+    const config: Record<string, unknown> = {
+      // Temperatura consistente entre providers (ver utils/model-params.ts).
+      generationConfig: { temperature: resolveTemperature() },
+    };
     if (systemInstruction) {
       config.systemInstruction = systemInstruction;
     }
     if (functionDeclarations.length > 0) {
       config.tools = [{ functionDeclarations }];
+      // AUTO: el modelo decide si llamar tools o responder directo (equivalente
+      // a tool_choice='auto' de OpenAI/Groq). Se documenta la intención.
+      config.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
     }
 
     try {
@@ -98,7 +105,9 @@ export class GoogleProvider implements ILlmProvider {
       messages.filter((m) => m.role !== 'system'),
     );
 
-    const config: Record<string, unknown> = {};
+    const config: Record<string, unknown> = {
+      generationConfig: { temperature: resolveTemperature() },
+    };
     if (systemInstruction) {
       config.systemInstruction = systemInstruction;
     }
@@ -193,7 +202,7 @@ export class GoogleProvider implements ILlmProvider {
 
     for (const [key, prop] of Object.entries(tool.parameters.properties)) {
       const geminiProp: Record<string, unknown> = {
-        type: this.mapType(prop.type),
+        type: this.mapType(Array.isArray(prop.type) ? prop.type[0] : prop.type),
         description: prop.description,
       };
       if (prop.enum) {
@@ -216,7 +225,9 @@ export class GoogleProvider implements ILlmProvider {
     };
   }
 
-  private mapType(type: string): Type {
+  private mapType(type: string | string[]): Type {
+    // If type is an array (union), use the first type as primary
+    const primaryType = Array.isArray(type) ? type[0] : type;
     const typeMap: Record<string, Type> = {
       string: Type.STRING,
       number: Type.NUMBER,
@@ -225,7 +236,7 @@ export class GoogleProvider implements ILlmProvider {
       array: Type.ARRAY,
       object: Type.OBJECT,
     };
-    return typeMap[type] || Type.STRING;
+    return typeMap[primaryType] || Type.STRING;
   }
 
   private generateCallId(): string {

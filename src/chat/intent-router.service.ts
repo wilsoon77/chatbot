@@ -21,6 +21,13 @@ export interface IntentClassification {
    *         previo. El agentic loop debe manejarlo usando el historial.
    */
   isShortAnswer: boolean;
+  /**
+   * true → el mensaje pide buscar / ver / comprar un producto concreto
+   *         (menciona un sustantivo de producto o un verbo de búsqueda).
+   *         Lo usa el agentic loop para forzar una `buscar_productos` antes de
+   *         permitir `pedir_aclaracion` (guard de existencia de productos).
+   */
+  isProductSearch: boolean;
 }
 
 /**
@@ -65,12 +72,21 @@ export class IntentRouterService {
   private readonly ACTION_KEYWORDS_RE =
     /\b(?:busc[aá]r?|quiero\s+ver|necesito|ver\s+stock|consultar|estado\s+de\s+mi?\s+pedido|mi?\s+pedido|agregar\s+al\s+carrito|a[nñ]adir\s+al\s+carrito|comprar|precio|cu[aá]nto\s+cuesta|cu[aá]nto\s+vale|tienen|hay\s+stock|disponible|categor[ií]a|categor[ií]as|producto|productos|teclado|mouse|monitor|laptop|aud[ií]fonos|cable|cargador|memoria|disco|tarjeta|impresora|webcam|altavoz|bocina|router|celular|tel[eé]fono|tablet|auriculares)\b/i;
 
+  // ── Verbos/sustantivos de BÚSQUEDA DE PRODUCTO ─────────────────────────
+  // Subconjunto de ACTION_KEYWORDS_RE que indica específicamente que el usuario
+  // quiere VER / BUSCAR / COMPRAR un producto concreto. Permite distinguirlo de
+  // otras acciones (consultar pedido, ver stock de un ID ya conocido) para que
+  // el guard del agentic loop fuerce una búsqueda antes de pedir_aclaracion.
+  private readonly PRODUCT_SEARCH_RE =
+    /\b(?:busc[aá]r?|quiero\s+ver|necesito|comprar|precio|cu[aá]nto\s+cuesta|cu[aá]nto\s+vale|tienen|producto|productos|teclado|mouse|monitor|laptop|aud[ií]fonos|cable|cargador|memoria|disco|tarjeta|impresora|webcam|altavoz|bocina|router|celular|tel[eé]fono|tablet|auriculares)\b/i;
+
   /**
    * Clasifica la intención de un mensaje.
    *
    * Reglas de decisión (en orden):
    * 1. Mensaje vacío → needsTools=false (deja que el LLM responda).
    * 2. Contiene palabras clave de acción → needsTools=true (agentic loop).
+   *    Además, si matchea PRODUCT_SEARCH_RE → isProductSearch=true.
    * 3. Coincide con saludo/despedida/agradecimiento/identidad → needsTools=false.
    * 4. Coincide con respuesta corta afirmativa/negativa → needsTools=true,
    *    isShortAnswer=true (el loop + prompt reforzado manejan el contexto).
@@ -80,35 +96,76 @@ export class IntentRouterService {
     const text = (message || '').trim();
 
     if (text.length === 0) {
-      return { needsTools: false, intent: 'empty', isShortAnswer: false };
+      return {
+        needsTools: false,
+        intent: 'empty',
+        isShortAnswer: false,
+        isProductSearch: false,
+      };
     }
 
     // (2) Anti-falso-positivo: si hay verbos/sustantivos de acción, va al loop.
     if (this.ACTION_KEYWORDS_RE.test(text)) {
-      return { needsTools: true, intent: 'action', isShortAnswer: false };
+      const isProductSearch = this.PRODUCT_SEARCH_RE.test(text);
+      return {
+        needsTools: true,
+        intent: isProductSearch ? 'product_search' : 'action',
+        isShortAnswer: false,
+        isProductSearch,
+      };
     }
 
     // (3) Small-talk puro → sin tools.
     if (this.GREETING_RE.test(text)) {
-      return { needsTools: false, intent: 'greeting', isShortAnswer: false };
+      return {
+        needsTools: false,
+        intent: 'greeting',
+        isShortAnswer: false,
+        isProductSearch: false,
+      };
     }
     if (this.FAREWELL_RE.test(text)) {
-      return { needsTools: false, intent: 'farewell', isShortAnswer: false };
+      return {
+        needsTools: false,
+        intent: 'farewell',
+        isShortAnswer: false,
+        isProductSearch: false,
+      };
     }
     if (this.THANKS_RE.test(text)) {
-      return { needsTools: false, intent: 'thanks', isShortAnswer: false };
+      return {
+        needsTools: false,
+        intent: 'thanks',
+        isShortAnswer: false,
+        isProductSearch: false,
+      };
     }
     if (this.IDENTITY_RE.test(text)) {
-      return { needsTools: false, intent: 'identity', isShortAnswer: false };
+      return {
+        needsTools: false,
+        intent: 'identity',
+        isShortAnswer: false,
+        isProductSearch: false,
+      };
     }
 
     // (4) Respuesta corta afirmativa/negativa → loop con flag de contexto.
     if (this.SHORT_ANSWER_RE.test(text)) {
-      return { needsTools: true, intent: 'short_answer', isShortAnswer: true };
+      return {
+        needsTools: true,
+        intent: 'short_answer',
+        isShortAnswer: true,
+        isProductSearch: false,
+      };
     }
 
     // (5) Default conservador: mensaje no reconocido → al loop con tools.
-    return { needsTools: true, intent: 'unknown', isShortAnswer: false };
+    return {
+      needsTools: true,
+      intent: 'unknown',
+      isShortAnswer: false,
+      isProductSearch: false,
+    };
   }
 
   /**
@@ -117,7 +174,7 @@ export class IntentRouterService {
   classifyWithLog(message: string): IntentClassification {
     const result = this.classify(message);
     this.logger.debug(
-      `IntentRouter: intent="${result.intent}" needsTools=${result.needsTools} isShortAnswer=${result.isShortAnswer} | msg="${message?.slice(0, 60)}"`,
+      `IntentRouter: intent="${result.intent}" needsTools=${result.needsTools} isShortAnswer=${result.isShortAnswer} isProductSearch=${result.isProductSearch} | msg="${message?.slice(0, 60)}"`,
     );
     return result;
   }

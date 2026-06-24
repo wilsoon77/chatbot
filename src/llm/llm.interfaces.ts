@@ -25,7 +25,7 @@ export interface Message {
 // ─── Tool Definitions ───────────────────────────────────────
 
 export interface ToolParameterProperty {
-  type: string;
+  type: string | string[];
   description: string;
   enum?: string[];
   items?: { type: string };
