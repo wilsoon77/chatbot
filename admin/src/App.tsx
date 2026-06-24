@@ -4,6 +4,8 @@ import { LoginPage } from './features/auth/pages/LoginPage';
 import { DashboardPage } from './features/dashboard/pages/DashboardPage';
 import { TenantsPage } from './features/tenants/pages/TenantsPage';
 import { NewTenantPage } from './features/tenants/pages/NewTenantPage';
+import { EditTenantPage } from './features/tenants/pages/EditTenantPage';
+import type { Tenant } from './features/tenants/service/tenantsService';
 import type { Page } from './types/navigation';
 
 function App() {
@@ -12,6 +14,7 @@ function App() {
   );
 
   const [page, setPage] = useState<Page>('dashboard');
+  const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
 
   const handleLogin = () => setIsAuthenticated(true);
   const handleLogout = () => setIsAuthenticated(false);
@@ -25,6 +28,7 @@ function App() {
       <TenantsPage
         onLogout={handleLogout}
         onNavigate={setPage}
+        onEditTenant={setEditingTenant}
       />
     );
   }
@@ -32,6 +36,16 @@ function App() {
   if (page === 'new-tenant') {
     return (
       <NewTenantPage
+        onLogout={handleLogout}
+        onNavigate={setPage}
+      />
+    );
+  }
+
+  if (page === 'edit-tenant' && editingTenant) {
+    return (
+      <EditTenantPage
+        tenant={editingTenant}
         onLogout={handleLogout}
         onNavigate={setPage}
       />

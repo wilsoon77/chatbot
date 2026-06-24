@@ -1,0 +1,38 @@
+/* Sección de llaves */
+.nt-keys-section {
+  background: rgba(251, 191, 36, 0.04);
+  border: 1px solid rgba(251, 191, 36, 0.15);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.nt-keys-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nt-keys-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fbbf24;
+}
+
+.nt-keys-hint {
+  font-size: 11px;
+  color: var(--color-subtext);
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 20px;
+  padding: 2px 10px;
+}
+
+.nt-optional {
+  font-size: 11px;
+  color: var(--color-subtext);
+  font-weight: 400;
+}

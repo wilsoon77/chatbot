@@ -1,8 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
+import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { CryptoService } from '../common/crypto/crypto.service';
-
 
 @Injectable()
 export class TenantsService {
@@ -15,7 +15,6 @@ export class TenantsService {
     tenant: T | null,
   ) {
     if (!tenant) return null;
-
     const { consumerKey, consumerSecret, ...safeTenant } = tenant as any;
     return safeTenant;
   }
@@ -45,6 +44,40 @@ export class TenantsService {
     });
 
     return this.sanitizeTenant(tenant);
+  }
+
+  async update(id: string, data: UpdateTenantDto) {
+    // Verificar que el tenant existe antes de actualizar
+    const exists = await this.prisma.tenant.findUnique({ where: { id } });
+    if (!exists) throw new NotFoundException(`Tenant con id "${id}" no encontrado`);
+
+    // Solo encriptar las llaves si vienen en el body
+    const dataToUpdate: any = { ...data };
+
+    if (data.consumerKey) {
+      dataToUpdate.consumerKey = this.cryptoService.encrypt(data.consumerKey);
+    }
+
+    if (data.consumerSecret) {
+      dataToUpdate.consumerSecret = this.cryptoService.encrypt(data.consumerSecret);
+    }
+
+    const updated = await this.prisma.tenant.update({
+      where: { id },
+      data: dataToUpdate,
+    });
+
+    return this.sanitizeTenant(updated);
+  }
+
+  async remove(id: string) {
+    // Verificar que el tenant existe antes de eliminar
+    const exists = await this.prisma.tenant.findUnique({ where: { id } });
+    if (!exists) throw new NotFoundException(`Tenant con id "${id}" no encontrado`);
+
+    await this.prisma.tenant.delete({ where: { id } });
+
+    return { message: `Tenant "${exists.nombre}" eliminado correctamente` };
   }
 
   // Para uso interno: aquí sí devuelve las llaves descifradas

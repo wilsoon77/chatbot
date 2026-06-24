@@ -50,4 +50,28 @@ export const tenantsService = {
 
     return res.json();
   },
+
+
+async update(id: string, data: Record<string, unknown>): Promise<Tenant> {
+  const token = localStorage.getItem('access_token');
+  const res = await fetch(`${API_URL}/admin/tenants/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Error al actualizar el tenant');
+  return res.json();
+},
+
+async delete(id: string): Promise<void> {
+  const token = localStorage.getItem('access_token');
+  const res = await fetch(`${API_URL}/admin/tenants/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error('Error al eliminar el tenant');
+},
+
+
 };
+
