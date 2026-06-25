@@ -1,4 +1,4 @@
-import { IsString, IsArray, IsInt, IsOptional } from 'class-validator';
+import { IsString, IsArray, IsInt, IsOptional, IsBoolean, } from 'class-validator';
 
 export class UpdateTenantDto {
   @IsString()
@@ -29,4 +29,8 @@ export class UpdateTenantDto {
   @IsInt()
   @IsOptional()
   redisTTL?: number;
+
+  @IsBoolean()          // 👈 NUEVO
+  @IsOptional()
+  isActive?: boolean;
 }

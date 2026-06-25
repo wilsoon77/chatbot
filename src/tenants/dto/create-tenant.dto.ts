@@ -23,4 +23,6 @@ export class CreateTenantDto {
   @IsInt()
   @IsOptional()
   redisTTL?: number;
+
+  
 }

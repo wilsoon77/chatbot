@@ -4,6 +4,8 @@ import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { CryptoService } from '../common/crypto/crypto.service';
 
+
+
 @Injectable()
 export class TenantsService {
   constructor(
@@ -47,11 +49,10 @@ export class TenantsService {
   }
 
   async update(id: string, data: UpdateTenantDto) {
-    // Verificar que el tenant existe antes de actualizar
     const exists = await this.prisma.tenant.findUnique({ where: { id } });
-    if (!exists) throw new NotFoundException(`Tenant con id "${id}" no encontrado`);
+    if (!exists)
+      throw new NotFoundException(`Tenant con id "${id}" no encontrado`);
 
-    // Solo encriptar las llaves si vienen en el body
     const dataToUpdate: any = { ...data };
 
     if (data.consumerKey) {
@@ -71,22 +72,51 @@ export class TenantsService {
   }
 
   async remove(id: string) {
-    // Verificar que el tenant existe antes de eliminar
     const exists = await this.prisma.tenant.findUnique({ where: { id } });
-    if (!exists) throw new NotFoundException(`Tenant con id "${id}" no encontrado`);
+    if (!exists)
+      throw new NotFoundException(`Tenant con id "${id}" no encontrado`);
 
     await this.prisma.tenant.delete({ where: { id } });
 
-    return { message: `Tenant "${exists.nombre}" eliminado correctamente` };
+    return {
+      message: `Tenant "${exists.nombre}" eliminado correctamente`,
+    };
   }
 
-  // Para uso interno: aquí sí devuelve las llaves descifradas
+  // ⚡ NUEVO: activar/desactivar tenant
+  async toggleActive(id: string) {
+    const tenant = await this.prisma.tenant.findUnique({ where: { id } });
+
+    if (!tenant) {
+      throw new NotFoundException(`Tenant con id "${id}" no encontrado`);
+    }
+
+    const updated = await this.prisma.tenant.update({
+      where: { id },
+      // tenant may not have isActive typed on the generated type, cast to any
+      data: { isActive: !(tenant as any).isActive },
+    });
+
+    const isActive = (updated as any).isActive;
+
+    return {
+      id: updated.id,
+      nombre: updated.nombre,
+      isActive,
+      message: `Tenant "${updated.nombre}" ${isActive ? 'activado' : 'desactivado'} correctamente`,
+    };
+  }
+
+  //  uso interno (chat / widget)
   async getTenantConfig(id: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id },
     });
 
     if (!tenant) return null;
+
+    //  bloquea si está desactivado
+    if (!(tenant as any).isActive) return null;
 
     return {
       ...tenant,

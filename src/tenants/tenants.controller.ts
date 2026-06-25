@@ -31,4 +31,12 @@ export class TenantsController {
   remove(@Param('id') id: string) {
     return this.tenantsService.remove(id);
   }
+
+    @Patch(':id/toggle')          //  NUEVO endpoint
+  toggleActive(@Param('id') id: string) {
+    return this.tenantsService.toggleActive(id);
+  }
+
+
+
 }

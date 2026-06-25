@@ -9,6 +9,7 @@ export interface Tenant {
   consumerSecret: string;
   enabledTools: string[];
   redisTTL: number;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
