@@ -212,3 +212,140 @@
 .nt-btn-submit:hover:not(:disabled) { background: #2563eb; }
 .nt-btn-submit:active:not(:disabled) { transform: scale(0.97); }
 .nt-btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+
+/* ======================
+   TABLET
+====================== */
+
+@media (max-width: 1024px) {
+  .new-tenant__form {
+    max-width: 100%;
+  }
+
+  .new-tenant__title {
+    font-size: 20px;
+  }
+
+  .nt-actions {
+    gap: 12px;
+  }
+
+  .nt-tool {
+    flex: 1 1 calc(50% - 8px);
+    justify-content: center;
+  }
+}
+
+/* ======================
+   MOBILE
+====================== */
+
+@media (max-width: 768px) {
+  .new-tenant__breadcrumb {
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 13px;
+  }
+
+  .new-tenant__title {
+    font-size: 18px;
+    line-height: 1.3;
+  }
+
+  .new-tenant__subtitle {
+    font-size: 13px;
+    margin-top: -10px;
+  }
+
+  .nt-label {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .nt-counter {
+    margin-left: 0;
+    width: 100%;
+    text-align: right;
+  }
+
+  .nt-input,
+  .nt-textarea {
+    font-size: 16px; /* evita zoom en iPhone */
+    padding: 12px;
+  }
+
+  .nt-input--short {
+    max-width: 100%;
+  }
+
+  .nt-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .nt-tools {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .nt-tool {
+    width: 100%;
+    justify-content: center;
+    padding: 10px;
+  }
+
+  .nt-actions {
+    flex-direction: column-reverse;
+    width: 100%;
+  }
+
+  .nt-btn-cancel,
+  .nt-btn-submit {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ======================
+   MOBILE PEQUEÑO
+====================== */
+
+@media (max-width: 480px) {
+  .new-tenant__breadcrumb {
+    font-size: 12px;
+  }
+
+  .new-tenant__title {
+    font-size: 16px;
+  }
+
+  .new-tenant__subtitle {
+    font-size: 12px;
+  }
+
+  .nt-hint,
+  .nt-error {
+    font-size: 11px;
+  }
+
+  .nt-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .nt-tool {
+    font-size: 12px;
+    padding: 10px 12px;
+  }
+
+  .nt-btn-cancel,
+  .nt-btn-submit {
+    font-size: 13px;
+    padding: 12px;
+  }
+
+  .nt-textarea {
+    min-height: 140px;
+  }
+}

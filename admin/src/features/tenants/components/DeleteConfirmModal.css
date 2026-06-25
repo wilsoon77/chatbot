@@ -90,3 +90,115 @@
 .modal-btn--delete:hover:not(:disabled) {
   background: rgba(248,113,113,0.25);
 }
+
+
+/* ======================
+   RESPONSIVE EXTRA
+====================== */
+
+/* Pantallas grandes */
+@media (min-width: 1440px) {
+  :root {
+    font-size: 20px;
+  }
+
+  h1 {
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  h2,
+  p {
+    max-width: 900px;
+  }
+}
+
+/* Tablets */
+@media (max-width: 1024px) {
+  body {
+    padding: 0;
+  }
+
+  h1 {
+    font-size: clamp(30px, 5vw, 42px);
+    padding: 0 20px;
+  }
+
+  h2,
+  p {
+    padding: 0 20px;
+  }
+
+  code {
+    max-width: 100%;
+    overflow-wrap: break-word;
+  }
+}
+
+/* Móviles */
+@media (max-width: 768px) {
+  :root {
+    font-size: 15px;
+  }
+
+  h1 {
+    font-size: clamp(26px, 8vw, 36px);
+    margin: 16px 0;
+    padding: 0 16px;
+    line-height: 1.15;
+  }
+
+  h2 {
+    font-size: 20px;
+    text-align: center;
+    padding: 0 16px;
+  }
+
+  p {
+    padding: 0 16px;
+    line-height: 1.6;
+  }
+
+  code {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 13px;
+  }
+
+  .counter {
+    width: 100%;
+    max-width: 280px;
+    justify-content: center;
+  }
+}
+
+/* Móviles pequeños */
+@media (max-width: 480px) {
+  :root {
+    font-size: 14px;
+  }
+
+  h1 {
+    font-size: 24px;
+    letter-spacing: -0.8px;
+    padding: 0 12px;
+  }
+
+  h2 {
+    font-size: 18px;
+    padding: 0 12px;
+  }
+
+  p {
+    padding: 0 12px;
+  }
+
+  code {
+    font-size: 12px;
+    padding: 6px;
+  }
+}

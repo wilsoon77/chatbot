@@ -253,3 +253,138 @@
 .tenant-card__btn--delete:hover {
   background: rgba(248, 113, 113, 0.16);
 }
+
+/* ======================
+   TABLET
+====================== */
+
+@media (max-width: 1024px) {
+  .tenants__grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
+
+  .tenant-card {
+    padding: 20px;
+  }
+}
+
+/* ======================
+   MOBILE
+====================== */
+
+@media (max-width: 768px) {
+  .tenants__header-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tenants__btn-refresh,
+  .tenants__btn-new {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .tenants__grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .tenant-card {
+    padding: 16px;
+    gap: 14px;
+  }
+
+  .tenant-card__header {
+    flex-wrap: wrap;
+  }
+
+  .tenant-card__badge {
+    margin-left: auto;
+  }
+
+  .tenant-card__name {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    word-break: break-word;
+  }
+
+  .tenant-card__row {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .tenant-card__label {
+    padding-top: 0;
+  }
+
+  .tenant-card__value,
+  .tenant-card__value--prompt {
+    width: 100%;
+    text-align: left;
+  }
+
+  .tenant-card__tools {
+    justify-content: flex-start;
+  }
+
+  .tenant-card__footer {
+    flex-direction: column;
+  }
+
+  .tenant-card__btn {
+    width: 100%;
+  }
+
+  .tenants__empty {
+    padding: 50px 0;
+  }
+
+  .tenants__empty-icon {
+    font-size: 44px;
+  }
+
+  .tenants__empty h2 {
+    font-size: 18px;
+  }
+}
+
+/* ======================
+   MOBILE PEQUEÑO
+====================== */
+
+@media (max-width: 480px) {
+  .tenant-card {
+    padding: 14px;
+  }
+
+  .tenant-card__icon {
+    font-size: 24px;
+  }
+
+  .tenant-card__name {
+    font-size: 14px;
+  }
+
+  .tenant-card__id {
+    font-size: 10px;
+    word-break: break-all;
+  }
+
+  .tenant-card__tool {
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+
+  .tenant-card__btn {
+    font-size: 12px;
+    padding: 10px;
+  }
+
+  .tenants__btn-refresh,
+  .tenants__btn-new {
+    font-size: 12px;
+    padding: 10px 12px;
+  }
+}
