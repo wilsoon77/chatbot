@@ -42,6 +42,19 @@ export class ToolsRegistry {
   }
 
   /**
+   * Herramientas que ejecutan acciones reales sobre la tienda. Si un tenant no
+   * tiene ninguna de estas habilitada, pedir_aclaración no tiene sentido (no hay
+   * ninguna acción que aclarar), así que no se inyecta.
+   */
+  private static readonly ACTION_TOOLS = [
+    'buscar_productos',
+    'ver_stock',
+    'ver_estado_pedido',
+    'obtener_categorias',
+    'agregar_al_carrito',
+  ];
+
+  /**
    * Obtiene las definiciones de tools habilitadas para un tenant.
    */
   getToolDefinitions(enabledToolNames: string[]): ToolDefinition[] {
@@ -49,10 +62,18 @@ export class ToolsRegistry {
       .filter((name) => this.tools.has(name))
       .map((name) => this.tools.get(name)!.getDefinition());
 
-    // Siempre agregamos la herramienta pedir_aclaracion de forma general
-    const clarificationTool = this.tools.get('pedir_aclaracion');
-    if (clarificationTool) {
-      definitions.push(clarificationTool.getDefinition());
+    // Solo inyectamos pedir_aclaracion si el tenant tiene al menos una
+    // herramienta de acción habilitada. Sin acciones reales, la aclaración no
+    // tiene sentido y solo invita al modelo a abusar de ella.
+    const hasActionTool = ToolsRegistry.ACTION_TOOLS.some((n) =>
+      enabledToolNames.includes(n),
+    );
+
+    if (hasActionTool) {
+      const clarificationTool = this.tools.get('pedir_aclaracion');
+      if (clarificationTool) {
+        definitions.push(clarificationTool.getDefinition());
+      }
     }
 
     return definitions;

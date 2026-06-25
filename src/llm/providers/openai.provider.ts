@@ -7,6 +7,8 @@ import type {
   LlmResponse,
   ToolCall,
 } from '../llm.interfaces.js';
+import { coerceNumericArgs } from '../utils/coerce-args.js';
+import { resolveTemperature } from '../utils/model-params.js';
 
 /**
  * Provider genérico compatible con el formato OpenAI v1.
@@ -79,11 +81,15 @@ export class OpenAiProvider implements ILlmProvider {
     const body: Record<string, unknown> = {
       model: this.model,
       messages: openaiMessages,
-      temperature: 0.1,
+      // Temperatura consistente entre providers (ver utils/model-params.ts).
+      temperature: resolveTemperature(),
     };
 
     if (openaiTools.length > 0) {
       body.tools = openaiTools;
+      // tool_choice='auto' explícito: el modelo decide si llamar tools o responder
+      // directo. (Default de la API, pero se documenta la intención.)
+      body.tool_choice = 'auto';
     }
 
     const controller = new AbortController();
@@ -133,7 +139,9 @@ export class OpenAiProvider implements ILlmProvider {
         const toolCalls: ToolCall[] = assistantMessage.tool_calls.map((tc) => ({
           id: tc.id,
           name: tc.function.name,
-          args: JSON.parse(tc.function.arguments) as Record<string, unknown>,
+          args: coerceNumericArgs(
+            JSON.parse(tc.function.arguments) as Record<string, unknown>,
+          ),
         }));
 
         this.logger.debug(`Solicitado tool calls: ${toolCalls.map((tc) => tc.name).join(', ')}`);
@@ -169,7 +177,7 @@ export class OpenAiProvider implements ILlmProvider {
     const body = {
       model: this.model,
       messages: openaiMessages,
-      temperature: 0.1,
+      temperature: resolveTemperature(),
       stream: true,
     };
 

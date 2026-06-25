@@ -41,7 +41,8 @@ export class WooCommerceClient {
    * Descifra las credenciales de WooCommerce antes de retornarlas.
    */
   private async getTenantConfig(tenantId: string) {
-    const tenant = await this.prisma.tenant.findUnique({ // 👈 reemplaza this.tenantsService
+    const tenant = await this.prisma.tenant.findUnique({
+      // 👈 reemplaza this.tenantsService
       where: { id: tenantId },
     });
 
@@ -62,7 +63,7 @@ export class WooCommerceClient {
     // Descifrar credenciales antes de usarlas
     return {
       ...tenant,
-      consumerKey: this.cryptoService.decrypt(tenant.consumerKey),     // 👈 agregado
+      consumerKey: this.cryptoService.decrypt(tenant.consumerKey), // 👈 agregado
       consumerSecret: this.cryptoService.decrypt(tenant.consumerSecret), // 👈 agregado
     };
   }
@@ -101,7 +102,8 @@ export class WooCommerceClient {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       },
     });
 
@@ -138,9 +140,40 @@ interface WooProduct {
   stock_status: string;
   stock_quantity: number | null;
   short_description: string;
+  description: string;
+  sku: string;
   categories: Array<{ id: number; name: string }>;
+  tags: Array<{ id: number; name: string }>;
   images: Array<{ src: string }>;
   permalink: string;
+}
+
+/**
+ * Construye un blob de texto "buscable" a partir de un producto, combinando
+ * todos los campos relevantes que WooCommerce indexa: nombre, descripción,
+ * descripción corta, SKU, categorías y tags. Se normaliza a minúsculas y se
+ * elimina el HTML para que el post-filter por tokens pueda comparar contra
+ * el contenido real, no solo contra el título.
+ *
+ * Esto resuelve el caso en que el usuario busca "teclado RGB" y el producto
+ * se llama "Teclado mecánico" pero su DESCRIPCIÓN dice "con iluminación RGB":
+ * antes el post-filter solo revisaba el nombre y lo descartaba como no-match.
+ */
+function buildSearchableText(p: WooProduct): string {
+  const stripHtml = (html: string) =>
+    html
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&[a-z]+;/gi, ' ')
+      .replace(/\s+/g, ' ');
+  const parts = [
+    p.name,
+    p.short_description,
+    p.description,
+    p.sku,
+    (p.categories || []).map((c) => c.name).join(' '),
+    (p.tags || []).map((t) => t.name).join(' '),
+  ];
+  return stripHtml(parts.join(' ')).toLowerCase();
 }
 
 interface WooOrder {
@@ -187,7 +220,12 @@ export class BuscarProductosTool extends BaseTool {
         'En caso de duda, omite "categoria" por completo — la búsqueda por "query" es suficiente. ' +
         'IMPORTANTE: NO llames esta herramienta si el usuario solo saluda, agradece, se despide o ' +
         'pregunta "¿qué venden?"/"¿qué tienen?" (en ese caso usa `obtener_categorias`). ' +
-        'Solo úsala cuando el usuario mencione explícitamente un producto o tipo de producto a buscar.',
+        'Solo úsala cuando el usuario mencione explícitamente un producto o tipo de producto a buscar. ' +
+        'NUNCA pidas datos adicionales (marca, modelo, precio) antes de buscar: busca primero con lo que ' +
+        'el usuario dio. La búsqueda se amplía automáticamente: si no hay resultados para el query ' +
+        'completo, reintenta con un término más base. Si aun así no hay, devuelve un objeto con ' +
+        'status "no_results" — en ese caso NO insistas: informa al usuario y ofrece alternativas ' +
+        'reales (otra búsqueda o categorías).',
       parameters: {
         type: 'object',
         properties: {
@@ -205,8 +243,9 @@ export class BuscarProductosTool extends BaseTool {
               'NO inventar nombres de categorías ni convertirlos a slugs.',
           },
           limite: {
-            type: 'integer',
-            description: 'Cantidad máxima de resultados a retornar (por defecto 5, máximo 10). DEBE ser un número entero sin comillas.',
+            type: ['integer', 'string'],
+            description:
+              'Cantidad máxima de resultados a retornar (por defecto 5, máximo 10). DEBE ser un número entero.',
           },
         },
         required: ['query'],
@@ -222,59 +261,109 @@ export class BuscarProductosTool extends BaseTool {
     const limite = Math.min(Number(args.limite) || 5, 10);
 
     if (!tenantId) {
-      return 'Error: falta tenant_id.';
+      return JSON.stringify({ status: 'error', mensaje: 'Falta tenant_id.' });
     }
 
-    const requestLimit = query.length <= 4 ? limite * 3 : limite;
-
-    const params: Record<string, string> = {
-      search: query,
-      per_page: String(requestLimit),
-      status: 'publish',
+    const buildParams = (searchTerm: string): Record<string, string> => {
+      const p: Record<string, string> = {
+        search: searchTerm,
+        per_page: String(searchTerm.length <= 4 ? limite * 3 : limite),
+        status: 'publish',
+      };
+      if (args.categoria) {
+        const cat = String(args.categoria).trim();
+        if (/^\d+$/.test(cat)) {
+          p.category = cat;
+          this.logger.debug(`Filtrando por categoría ID: ${cat}`);
+        } else {
+          this.logger.warn(
+            `Categoría ignorada (no es ID numérico): "${cat}". Se buscará solo por query: "${searchTerm}".`,
+          );
+        }
+      }
+      return p;
     };
 
-    if (args.categoria) {
-      const cat = String(args.categoria).trim();
-      if (/^\d+$/.test(cat)) {
-        params.category = cat;
-        this.logger.debug(`Filtrando por categoría ID: ${cat}`);
-      } else {
-        this.logger.warn(
-          `Categoría ignorada (no es ID numérico): "${cat}". Se buscará solo por query: "${query}".`,
-        );
-      }
-    }
-
-    try {
-      let products = await this.wooClient.get<WooProduct[]>(
+    // Busca un término en WooCommerce y aplica el post-filter por tokens.
+    // Devuelve { products, usedFallback } o null si Woo no trajo nada.
+    const searchWoo = async (
+      searchTerm: string,
+    ): Promise<{ products: WooProduct[]; usedFallback: boolean } | null> => {
+      const products = await this.wooClient.get<WooProduct[]>(
         tenantId,
         'products',
-        params,
+        buildParams(searchTerm),
       );
-
       if (!products || products.length === 0) {
-        return `No se encontraron productos para "${query}".`;
+        return null;
       }
 
-      if (query.length > 0) {
-        const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const wordReg = new RegExp(`\\b${escapedQuery}\\b`, 'i');
+      if (searchTerm.length > 0) {
+        // Post-filter tolerante a multi-palabra: el query se parte en tokens y
+        // se exige que TODAS las palabras estén presentes en el contenido
+        // completo del producto (nombre + descripción + descripción corta +
+        // SKU + categorías + tags), no necesariamente contiguas ni en el mismo
+        // campo. Así "teclado RGB" matchea un producto cuyo NOMBRE es
+        // "Teclado mecánico" pero cuya DESCRIPCIÓN dice "con iluminación RGB".
+        const tokens = searchTerm
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((t) => t.length > 0);
+        const matchesAllTokens = (p: WooProduct) => {
+          const haystack = buildSearchableText(p);
+          return tokens.every((tok) => haystack.includes(tok));
+        };
 
-        const filtered = products.filter((p) => wordReg.test(p.name));
-
+        const filtered = products.filter((p) => matchesAllTokens(p));
         if (filtered.length > 0) {
-          products = filtered.slice(0, limite);
-        } else {
-          products = products.slice(0, limite);
+          return { products: filtered.slice(0, limite), usedFallback: false };
         }
-      } else {
-        // Si la consulta es vacía (búsqueda general), recortamos al límite solicitado
-        products = products.slice(0, limite);
+        // Sin coincidencia en ningún campo: devolvemos el top-N que entregó
+        // WooCommerce (su motor de búsqueda ya pondera por relevancia).
+        this.logger.warn(
+          `Ningún producto contiene todos los tokens de "${searchTerm}" en ` +
+            `nombre/descripción/tags. Devolviendo top-${limite} de WooCommerce como fallback.`,
+        );
+        return { products: products.slice(0, limite), usedFallback: true };
+      }
+      return { products: products.slice(0, limite), usedFallback: false };
+    };
+
+    try {
+      // ── Fase 1: búsqueda con el query tal cual lo dio el usuario ──
+      let result = await searchWoo(query);
+
+      // ── Fase 2: si no hay resultados y el query es multi-palabra,
+      //    reintenta con el término base (primera palabra). ──
+      let queryAmpliado: string | null = null;
+      if (!result && query.includes(' ')) {
+        queryAmpliado = query.split(/\s+/)[0];
+        this.logger.debug(
+          `Sin resultados para "${query}". Reintentando con término base "${queryAmpliado}".`,
+        );
+        result = await searchWoo(queryAmpliado);
+      }
+
+      // ── Fase 3: si tras el reintento sigue sin resultados,
+      //    señal estructurada no_results para que el LLM ofrezca alternativas. ──
+      if (!result) {
+        const payload = {
+          status: 'no_results' as const,
+          query,
+          query_ampliado: queryAmpliado,
+          sugerencia:
+            `No se encontraron productos que coincidan con "${query}"` +
+            (queryAmpliado ? ` (ni con "${queryAmpliado}")` : '') +
+            '. Ofrece alternativas reales: sugiere buscar otro término, muestra ' +
+            'categorías disponibles con obtener_categorias, o pregunta por un ' +
+            'tipo de producto similar. NO inventes productos.',
+        };
+        return JSON.stringify(payload, null, 2);
       }
 
       const currency = this.wooClient.getCurrencySymbol();
 
-      const formatted = products.map((p) => ({
+      const formatted = result.products.map((p) => ({
         id: p.id,
         nombre: p.name,
         precio: p.on_sale
@@ -287,13 +376,31 @@ export class BuscarProductosTool extends BaseTool {
         url: p.permalink,
       }));
 
+      const isPartialMatch = queryAmpliado !== null || result.usedFallback;
+
+      if (isPartialMatch) {
+        const payload = {
+          status: 'partial_match' as const,
+          query_original: query,
+          query_usado: queryAmpliado || query,
+          nota: queryAmpliado
+            ? `No se encontraron productos para "${query}". Se muestran resultados similares para "${queryAmpliado}".`
+            : `No se encontraron productos que coincidan exactamente con todas las palabras de "${query}". Se muestran los resultados más relevantes del motor de búsqueda.`,
+          productos: formatted,
+        };
+        return JSON.stringify(payload, null, 2);
+      }
+
       return JSON.stringify(formatted, null, 2);
     } catch (error) {
       this.logger.error(
         `Error en la herramienta buscar_productos: ${(error as Error).message}`,
         (error as Error).stack,
       );
-      return `Error al buscar productos: ${(error as Error).message}`;
+      return JSON.stringify({
+        status: 'error',
+        mensaje: `Error al buscar productos: ${(error as Error).message}`,
+      });
     }
   }
 }
@@ -313,13 +420,19 @@ export class VerStockTool extends BaseTool {
   getDefinition(): ToolDefinition {
     return {
       name: this.name,
-      description: 'Obtiene las existencias físicas e inventario disponible de un producto específico mediante su ID.',
+      description:
+        'Obtiene las existencias físicas e inventario disponible de un producto específico mediante su ID. ' +
+        'El producto_id DEBE provenir de una búsqueda previa (buscar_productos) o del contexto de productos ' +
+        'ya mostrados al usuario. Si el usuario pregunta por el stock de un producto que aún no se ha mostrado ' +
+        'ni se ha buscado, primero llama a buscar_productos. NO pidas al usuario un ID numérico que ya tienes ' +
+        'en el contexto; resuélvelo directamente.',
       parameters: {
         type: 'object',
         properties: {
           producto_id: {
-            type: 'integer',
-            description: 'El ID numérico del producto (ej: 42, 107). Extraído del producto retornado previamente. DEBE ser un número entero sin comillas.',
+            type: ['integer', 'string'],
+            description:
+              'El ID numérico del producto (ej: 42, 107). Extraído del producto retornado previamente.',
           },
         },
         required: ['producto_id'],
@@ -335,18 +448,26 @@ export class VerStockTool extends BaseTool {
     if (isNaN(productId)) return 'Error: producto_id inválido.';
 
     try {
-      const p = await this.wooClient.get<WooProduct>(tenantId, `products/${productId}`);
+      const p = await this.wooClient.get<WooProduct>(
+        tenantId,
+        `products/${productId}`,
+      );
 
       const stockInfo = {
         id: p.id,
         nombre: p.name,
         disponible: p.stock_status === 'instock',
-        stock: p.stock_quantity !== null ? p.stock_quantity : 'Ilimitado / Sin control detallado',
+        stock:
+          p.stock_quantity !== null
+            ? p.stock_quantity
+            : 'Ilimitado / Sin control detallado',
       };
 
       return JSON.stringify(stockInfo, null, 2);
     } catch (error) {
-      this.logger.error(`Error en la herramienta ver_stock: ${(error as Error).message}`);
+      this.logger.error(
+        `Error en la herramienta ver_stock: ${(error as Error).message}`,
+      );
       return `Error al consultar stock: ${(error as Error).message}`;
     }
   }
@@ -375,12 +496,13 @@ export class VerEstadoPedidoTool extends BaseTool {
         type: 'object',
         properties: {
           pedido_id: {
-            type: 'integer',
-            description: 'El ID numérico de la orden o pedido (ej: 1422). DEBE ser un número entero sin comillas.',
+            type: ['integer', 'string'],
+            description: 'El ID numérico de la orden o pedido (ej: 1422).',
           },
           email: {
             type: 'string',
-            description: 'El correo electrónico asociado al pedido para validación de identidad.',
+            description:
+              'El correo electrónico asociado al pedido para validación de identidad.',
           },
         },
         required: ['pedido_id', 'email'],
@@ -391,18 +513,28 @@ export class VerEstadoPedidoTool extends BaseTool {
   async execute(args: Record<string, unknown>): Promise<string> {
     const tenantId = String(args.tenant_id || '');
     const orderId = Number(args.pedido_id);
-    const email = String(args.email || '').trim().toLowerCase();
+    const email = String(args.email || '')
+      .trim()
+      .toLowerCase();
 
     if (!tenantId) return 'Error: falta tenant_id.';
     if (isNaN(orderId)) return 'Error: pedido_id inválido.';
-    if (!email) return 'Error: el correo electrónico es obligatorio para validación de seguridad.';
+    if (!email)
+      return 'Error: el correo electrónico es obligatorio para validación de seguridad.';
 
     try {
-      const order = await this.wooClient.get<WooOrder>(tenantId, `orders/${orderId}`);
+      const order = await this.wooClient.get<WooOrder>(
+        tenantId,
+        `orders/${orderId}`,
+      );
 
-      const billingEmail = String(order.billing?.email || '').trim().toLowerCase();
+      const billingEmail = String(order.billing?.email || '')
+        .trim()
+        .toLowerCase();
       if (billingEmail !== email) {
-        this.logger.warn(`Intento de acceso denegado a orden ${orderId}: correo "${email}" no coincide con "${billingEmail}"`);
+        this.logger.warn(
+          `Intento de acceso denegado a orden ${orderId}: correo "${email}" no coincide con "${billingEmail}"`,
+        );
         return 'Acceso denegado: El correo electrónico provisto no coincide con el correo de facturación de esta orden.';
       }
 
@@ -421,7 +553,9 @@ export class VerEstadoPedidoTool extends BaseTool {
 
       return JSON.stringify(formattedOrder, null, 2);
     } catch (error) {
-      this.logger.error(`Error en la herramienta ver_estado_pedido: ${(error as Error).message}`);
+      this.logger.error(
+        `Error en la herramienta ver_estado_pedido: ${(error as Error).message}`,
+      );
       return `Error al consultar pedido: ${(error as Error).message}`;
     }
   }
@@ -442,7 +576,8 @@ export class ObtenerCategoriasTool extends BaseTool {
   getDefinition(): ToolDefinition {
     return {
       name: this.name,
-      description: 'Obtiene las categorías de productos disponibles en la tienda con sus respectivos IDs numéricos y conteo de productos.',
+      description:
+        'Obtiene las categorías de productos disponibles en la tienda con sus respectivos IDs numéricos y conteo de productos.',
       parameters: {
         type: 'object',
         properties: {},
@@ -455,10 +590,14 @@ export class ObtenerCategoriasTool extends BaseTool {
     if (!tenantId) return 'Error: falta tenant_id.';
 
     try {
-      const categories = await this.wooClient.get<WooCategory[]>(tenantId, 'products/categories', {
-        per_page: '100',
-        hide_empty: 'true',
-      });
+      const categories = await this.wooClient.get<WooCategory[]>(
+        tenantId,
+        'products/categories',
+        {
+          per_page: '100',
+          hide_empty: 'true',
+        },
+      );
 
       const formatted = categories.map((c) => ({
         id: c.id,
@@ -469,7 +608,9 @@ export class ObtenerCategoriasTool extends BaseTool {
 
       return JSON.stringify(formatted, null, 2);
     } catch (error) {
-      this.logger.error(`Error en la herramienta obtener_categorias: ${(error as Error).message}`);
+      this.logger.error(
+        `Error en la herramienta obtener_categorias: ${(error as Error).message}`,
+      );
       return `Error al obtener categorías: ${(error as Error).message}`;
     }
   }
@@ -485,17 +626,23 @@ export class AgregarAlCarritoTool extends BaseTool {
   getDefinition(): ToolDefinition {
     return {
       name: this.name,
-      description: 'Solicita agregar un producto al carrito de compras del usuario mediante su ID de producto.',
+      description:
+        'Solicita agregar un producto al carrito de compras del usuario mediante su ID de producto. ' +
+        'El producto_id DEBE provenir de una búsqueda previa (buscar_productos) o del contexto de productos ' +
+        'ya mostrados al usuario: si el usuario dice "ese", "el monitor", "agrégalo", extrae el ID del contexto. ' +
+        'Esta herramienta NO modifica el carrito directamente: devuelve una acción que el cliente confirma ' +
+        'en su interfaz, así que tras llamarla solo confirma al usuario que se agregará. NO la uses si el ' +
+        'producto no se ha mostrado ni buscado todavía (primero busca).',
       parameters: {
         type: 'object',
         properties: {
           producto_id: {
-            type: 'integer',
-            description: 'El ID numérico del producto a agregar. DEBE ser un número entero sin comillas.',
+            type: ['integer', 'string'],
+            description: 'El ID numérico del producto a agregar.',
           },
           cantidad: {
-            type: 'integer',
-            description: 'Cantidad de unidades a agregar (por defecto 1). DEBE ser un número entero sin comillas.',
+            type: ['integer', 'string'],
+            description: 'Cantidad de unidades a agregar (por defecto 1).',
           },
         },
         required: ['producto_id'],

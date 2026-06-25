@@ -7,6 +7,8 @@ import type {
   LlmResponse,
   ToolCall,
 } from '../llm.interfaces.js';
+import { coerceNumericArgs } from '../utils/coerce-args.js';
+import { resolveTemperature } from '../utils/model-params.js';
 
 /**
  * Provider para Ollama (modelos autoalojados).
@@ -67,10 +69,16 @@ export class OllamaProvider implements ILlmProvider {
       model: this.model,
       messages: openaiMessages,
       stream: false, // Ollama no soporta streaming de tool calls
+      // Temperatura consistente entre providers (ver utils/model-params.ts).
+      temperature: resolveTemperature(),
     };
 
     if (openaiTools.length > 0) {
       body.tools = openaiTools;
+      // tool_choice='auto' explícito: el modelo decide si llamar tools o responder
+      // directo. (Default en la API OpenAI-compatible, pero se documenta la intención
+      // y se iguala al comportamiento de Groq/OpenAI.)
+      body.tool_choice = 'auto';
     }
 
     const controller = new AbortController();
@@ -117,7 +125,9 @@ export class OllamaProvider implements ILlmProvider {
         const toolCalls: ToolCall[] = assistantMessage.tool_calls.map((tc) => ({
           id: tc.id,
           name: tc.function.name,
-          args: JSON.parse(tc.function.arguments) as Record<string, unknown>,
+          args: coerceNumericArgs(
+            JSON.parse(tc.function.arguments) as Record<string, unknown>,
+          ),
         }));
 
         return {
@@ -147,6 +157,7 @@ export class OllamaProvider implements ILlmProvider {
     const body = {
       model: this.model,
       messages: openaiMessages,
+      temperature: resolveTemperature(),
       stream: true,
     };
 
