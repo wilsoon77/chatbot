@@ -33,6 +33,16 @@ export function ChatWindow({
 }: ChatWindowProps) {
   const [inputText, setInputText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-ajustar la altura del textarea según su contenido
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${textarea.scrollHeight}px`;
+    }
+  }, [inputText, isOpen]);
 
   // Auto-scroll al final cuando llegan nuevos mensajes o typing cambia
   const scrollToBottom = () => {
@@ -137,15 +147,24 @@ export function ChatWindow({
 
       {/* ─── Entrada de Texto ─── */}
       <div className="chatbot-input-container">
-        <textarea
-          className="chatbot-textarea"
-          rows={1}
-          placeholder={isDisabled ? 'El asistente está escribiendo...' : 'Escribe tu mensaje...'}
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={isDisabled}
-        />
+        <div className="chatbot-textarea-wrapper">
+          <textarea
+            ref={textareaRef}
+            className="chatbot-textarea"
+            rows={1}
+            placeholder={isDisabled ? 'El asistente está escribiendo...' : 'Escribe tu mensaje...'}
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={isDisabled}
+            maxLength={200}
+          />
+          {inputText.length > 0 && (
+            <span className={`chatbot-char-counter ${inputText.length >= 180 ? 'near-limit' : ''}`}>
+              {inputText.length}/200
+            </span>
+          )}
+        </div>
         <button
           className="chatbot-send-btn"
           onClick={handleSend}

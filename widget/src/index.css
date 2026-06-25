@@ -57,7 +57,7 @@
 
 .chatbot-bubble:hover {
   transform: scale(1.1) rotate(5deg);
-  background-color: var(--primary-color-hover);
+  background-image: linear-gradient(rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.15));
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
 
@@ -415,7 +415,7 @@
 }
 
 .chatbot-product-btn:hover {
-  background-color: var(--primary-color-hover);
+  background-image: linear-gradient(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.12));
 }
 
 /* ─── Indicador de Escritura (Pulsar) ─── */
@@ -448,24 +448,38 @@
   background-color: #ffffff;
   border-top: 1px solid var(--border-color);
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 10px;
 }
 
-.chatbot-textarea {
+.chatbot-textarea-wrapper {
+  position: relative;
   flex: 1;
+  display: flex;
+  align-items: flex-end;
+}
+
+.chatbot-textarea {
+  width: 100%;
   border: 1px solid var(--border-color);
   border-radius: 20px;
-  padding: 8px 14px;
+  padding: 8px 50px 8px 14px;
   font-size: 13px;
   background-color: var(--bg-input);
   color: #1f2937;
   resize: none;
   outline: none;
-  max-height: 80px;
+  max-height: 100px;
   font-family: inherit;
   line-height: 1.4;
   transition: border-color 0.2s, background-color 0.2s;
+  box-sizing: border-box;
+  overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+}
+
+.chatbot-textarea::-webkit-scrollbar {
+  display: none; /* Safari y Chrome */
 }
 
 .chatbot-textarea:focus {
@@ -478,6 +492,23 @@
   border-color: #e5e7eb;
   color: #9ca3af;
   cursor: not-allowed;
+}
+
+.chatbot-char-counter {
+  position: absolute;
+  bottom: 8px;
+  right: 14px;
+  font-size: 10px;
+  color: #9ca3af;
+  pointer-events: none;
+  transition: color 0.2s;
+  font-family: inherit;
+  user-select: none;
+}
+
+.chatbot-char-counter.near-limit {
+  color: #ef4444;
+  font-weight: 600;
 }
 
 .chatbot-send-btn {
@@ -496,8 +527,8 @@
   box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
 
-.chatbot-send-btn:hover {
-  background-color: var(--primary-color-hover);
+.chatbot-send-btn:hover:not(:disabled) {
+  background-image: linear-gradient(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.12));
   transform: scale(1.05);
 }
 
