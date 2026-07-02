@@ -30,6 +30,11 @@ export class ChatStreamController {
     res.setHeader('Content-Encoding', 'none'); // Evita problemas de compresión (gzipping)
     res.flushHeaders();
 
+    // Intervalo de heartbeat para mantener la conexión activa en proxies y navegadores
+    const heartbeatInterval = setInterval(() => {
+      res.write(`:\n\n`); // Comentario SSE estándar que actúa como ping silencioso
+    }, 4000);
+
     try {
       await this.chatService.processMessageStream(
         dto.tenant_id,
@@ -55,6 +60,7 @@ export class ChatStreamController {
       this.logger.error(`Error en el controlador de streaming: ${(error as Error).message}`);
       res.write(`event: error\ndata: ${JSON.stringify({ message: (error as Error).message })}\n\n`);
     } finally {
+      clearInterval(heartbeatInterval);
       res.end();
     }
   }

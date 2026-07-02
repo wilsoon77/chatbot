@@ -1,9 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CryptoService } from '../../common/crypto/crypto.service.js'; // 👈 agregado
 import type { ToolDefinition } from '../../llm/llm.interfaces.js';
 import { BaseTool } from '../base.tool.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { COMMERCE_CONNECTOR_TOKEN } from '../../commerce/commerce.interfaces.js';
+import type { ICommerceConnector } from '../../commerce/commerce.interfaces.js';
 import {
   buscarProductosSchema,
   verStockSchema,
@@ -127,76 +129,8 @@ export class WooCommerceClient {
   }
 }
 
-// ────────────────────────────────────────────────────────────
-
-interface WooProduct {
-  id: number;
-  name: string;
-  slug: string;
-  price: string;
-  regular_price: string;
-  sale_price: string;
-  on_sale: boolean;
-  stock_status: string;
-  stock_quantity: number | null;
-  short_description: string;
-  description: string;
-  sku: string;
-  categories: Array<{ id: number; name: string }>;
-  tags: Array<{ id: number; name: string }>;
-  images: Array<{ src: string }>;
-  permalink: string;
-}
-
-/**
- * Construye un blob de texto "buscable" a partir de un producto, combinando
- * todos los campos relevantes que WooCommerce indexa: nombre, descripción,
- * descripción corta, SKU, categorías y tags. Se normaliza a minúsculas y se
- * elimina el HTML para que el post-filter por tokens pueda comparar contra
- * el contenido real, no solo contra el título.
- *
- * Esto resuelve el caso en que el usuario busca "teclado RGB" y el producto
- * se llama "Teclado mecánico" pero su DESCRIPCIÓN dice "con iluminación RGB":
- * antes el post-filter solo revisaba el nombre y lo descartaba como no-match.
- */
-function buildSearchableText(p: WooProduct): string {
-  const stripHtml = (html: string) =>
-    html
-      .replace(/<[^>]*>/g, ' ')
-      .replace(/&[a-z]+;/gi, ' ')
-      .replace(/\s+/g, ' ');
-  const parts = [
-    p.name,
-    p.short_description,
-    p.description,
-    p.sku,
-    (p.categories || []).map((c) => c.name).join(' '),
-    (p.tags || []).map((t) => t.name).join(' '),
-  ];
-  return stripHtml(parts.join(' ')).toLowerCase();
-}
-
-interface WooOrder {
-  id: number;
-  status: string;
-  total: string;
-  payment_method_title: string;
-  date_created: string;
-  billing: {
-    email: string;
-  };
-  line_items: Array<{
-    name: string;
-    quantity: number;
-    total: string;
-  }>;
-}
-
-interface WooCategory {
-  id: number;
-  name: string;
-  slug: string;
-  count: number;
+export function removeDiacritics(str: string): string {
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
 @Injectable()
@@ -205,7 +139,10 @@ export class BuscarProductosTool extends BaseTool {
   readonly name = 'buscar_productos';
   readonly inputSchema = buscarProductosSchema;
 
-  constructor(private readonly wooClient: WooCommerceClient) {
+  constructor(
+    @Inject(COMMERCE_CONNECTOR_TOKEN)
+    private readonly commerce: ICommerceConnector,
+  ) {
     super();
   }
 
@@ -213,34 +150,30 @@ export class BuscarProductosTool extends BaseTool {
     return {
       name: this.name,
       description:
-        'Busca productos en la tienda WooCommerce por nombre o palabra clave. ' +
-        'Usa siempre el parámetro "query" con las palabras exactas que mencionó el usuario. ' +
-        'NO uses el parámetro "categoria" a menos que el usuario haya indicado explícitamente ' +
-        'una categoría Y conozcas su ID numérico real en WooCommerce. ' +
-        'En caso de duda, omite "categoria" por completo — la búsqueda por "query" es suficiente. ' +
-        'IMPORTANTE: NO llames esta herramienta si el usuario solo saluda, agradece, se despide o ' +
-        'pregunta "¿qué venden?"/"¿qué tienen?" (en ese caso usa `obtener_categorias`). ' +
-        'Solo úsala cuando el usuario mencione explícitamente un producto o tipo de producto a buscar. ' +
-        'NUNCA pidas datos adicionales (marca, modelo, precio) antes de buscar: busca primero con lo que ' +
-        'el usuario dio. La búsqueda se amplía automáticamente: si no hay resultados para el query ' +
-        'completo, reintenta con un término más base. Si aun así no hay, devuelve un objeto con ' +
-        'status "no_results" — en ese caso NO insistas: informa al usuario y ofrece alternativas ' +
-        'reales (otra búsqueda o categorías).',
+        'Busca productos en la tienda WooCommerce por nombre, palabra clave o categoría. ' +
+        'Puedes buscar por término de texto usando "query", por categoría usando "categoria", o ambos. ' +
+        'Si el usuario pide ver el catálogo general, navegar la tienda de manera libre, o si no especifica un término claro, ' +
+        'puedes omitir ambos parámetros ("query" y "categoria") para listar los productos destacados y recientes de la tienda. ' +
+        'Si el usuario pide ver los productos de una categoría que listaste previamente, usa "categoria" con el ID numérico correspondiente y deja "query" vacío. ' +
+        'Si el usuario busca un producto por características o atributos específicos (ej: "teclado con switches intercambiables" o "mouse bluetooth"), ' +
+        'DEBES incluir estas palabras clave de atributos en "query" (ej: "teclado switches intercambiables") de forma descriptiva, excluyendo preposiciones como "con" o "de". ' +
+        'NUNCA pidas datos adicionales antes de buscar: busca primero con lo que el usuario dio.',
       parameters: {
         type: 'object',
         properties: {
           query: {
             type: 'string',
             description:
-              'Término de búsqueda en su forma base y en SINGULAR (ej: buscar "teclado" en lugar de "teclados", "flor" en lugar de "flores"). ' +
-              'Normaliza a la palabra raíz en singular y evita plurales, artículos o marcas secundarias a menos que sean explícitas.',
+              'Término de búsqueda principal. Opcional. ' +
+              'Normaliza las palabras a su forma singular (ej: "teclado" en lugar de "teclados"). ' +
+              'Incluye palabras clave de atributos descriptivos si el usuario los especificó.',
           },
           categoria: {
             type: 'string',
             description:
-              'ID numérico de la categoría en WooCommerce (ej: "17", "42"). ' +
-              'SOLO usar si el usuario especificó una categoría exacta Y tienes su ID numérico real. ' +
-              'NO inventar nombres de categorías ni convertirlos a slugs.',
+              'ID numérico de la categoría en WooCommerce (ej: "17", "42"). Opcional. ' +
+              'Usa el ID numérico exacto retornado previamente por la herramienta obtener_categorias. ' +
+              'Es extremadamente útil para listar todos los productos de una categoría específica sin necesidad de un query de búsqueda.',
           },
           limite: {
             type: ['integer', 'string'],
@@ -248,7 +181,7 @@ export class BuscarProductosTool extends BaseTool {
               'Cantidad máxima de resultados a retornar (por defecto 5, máximo 10). DEBE ser un número entero.',
           },
         },
-        required: ['query'],
+        required: [],
       },
     };
   }
@@ -259,139 +192,41 @@ export class BuscarProductosTool extends BaseTool {
 
     const query = String(args.query || '').trim();
     const limite = Math.min(Number(args.limite) || 5, 10);
+    const categoria = args.categoria ? String(args.categoria) : undefined;
 
     if (!tenantId) {
       return JSON.stringify({ status: 'error', mensaje: 'Falta tenant_id.' });
     }
 
-    const buildParams = (searchTerm: string): Record<string, string> => {
-      const p: Record<string, string> = {
-        search: searchTerm,
-        per_page: String(searchTerm.length <= 4 ? limite * 3 : limite),
-        status: 'publish',
-      };
-      if (args.categoria) {
-        const cat = String(args.categoria).trim();
-        if (/^\d+$/.test(cat)) {
-          p.category = cat;
-          this.logger.debug(`Filtrando por categoría ID: ${cat}`);
-        } else {
-          this.logger.warn(
-            `Categoría ignorada (no es ID numérico): "${cat}". Se buscará solo por query: "${searchTerm}".`,
-          );
-        }
-      }
-      return p;
-    };
-
-    // Busca un término en WooCommerce y aplica el post-filter por tokens.
-    // Devuelve { products, usedFallback } o null si Woo no trajo nada.
-    const searchWoo = async (
-      searchTerm: string,
-    ): Promise<{ products: WooProduct[]; usedFallback: boolean } | null> => {
-      const products = await this.wooClient.get<WooProduct[]>(
-        tenantId,
-        'products',
-        buildParams(searchTerm),
-      );
-      if (!products || products.length === 0) {
-        return null;
-      }
-
-      if (searchTerm.length > 0) {
-        // Post-filter tolerante a multi-palabra: el query se parte en tokens y
-        // se exige que TODAS las palabras estén presentes en el contenido
-        // completo del producto (nombre + descripción + descripción corta +
-        // SKU + categorías + tags), no necesariamente contiguas ni en el mismo
-        // campo. Así "teclado RGB" matchea un producto cuyo NOMBRE es
-        // "Teclado mecánico" pero cuya DESCRIPCIÓN dice "con iluminación RGB".
-        const tokens = searchTerm
-          .toLowerCase()
-          .split(/\s+/)
-          .filter((t) => t.length > 0);
-        const matchesAllTokens = (p: WooProduct) => {
-          const haystack = buildSearchableText(p);
-          return tokens.every((tok) => haystack.includes(tok));
-        };
-
-        const filtered = products.filter((p) => matchesAllTokens(p));
-        if (filtered.length > 0) {
-          return { products: filtered.slice(0, limite), usedFallback: false };
-        }
-        // Sin coincidencia en ningún campo: devolvemos el top-N que entregó
-        // WooCommerce (su motor de búsqueda ya pondera por relevancia).
-        this.logger.warn(
-          `Ningún producto contiene todos los tokens de "${searchTerm}" en ` +
-            `nombre/descripción/tags. Devolviendo top-${limite} de WooCommerce como fallback.`,
-        );
-        return { products: products.slice(0, limite), usedFallback: true };
-      }
-      return { products: products.slice(0, limite), usedFallback: false };
-    };
-
     try {
-      // ── Fase 1: búsqueda con el query tal cual lo dio el usuario ──
-      let result = await searchWoo(query);
+      const result = await this.commerce.searchProducts(tenantId, query, categoria, limite);
 
-      // ── Fase 2: si no hay resultados y el query es multi-palabra,
-      //    reintenta con el término base (primera palabra). ──
-      let queryAmpliado: string | null = null;
-      if (!result && query.includes(' ')) {
-        queryAmpliado = query.split(/\s+/)[0];
-        this.logger.debug(
-          `Sin resultados para "${query}". Reintentando con término base "${queryAmpliado}".`,
-        );
-        result = await searchWoo(queryAmpliado);
-      }
-
-      // ── Fase 3: si tras el reintento sigue sin resultados,
-      //    señal estructurada no_results para que el LLM ofrezca alternativas. ──
       if (!result) {
         const payload = {
           status: 'no_results' as const,
           query,
-          query_ampliado: queryAmpliado,
           sugerencia:
-            `No se encontraron productos que coincidan con "${query}"` +
-            (queryAmpliado ? ` (ni con "${queryAmpliado}")` : '') +
-            '. Ofrece alternativas reales: sugiere buscar otro término, muestra ' +
+            `No se encontraron productos que coincidan con "${query}". ` +
+            'Ofrece alternativas reales: sugiere buscar otro término, muestra ' +
             'categorías disponibles con obtener_categorias, o pregunta por un ' +
             'tipo de producto similar. NO inventes productos.',
         };
-        return JSON.stringify(payload, null, 2);
+        return JSON.stringify(payload);
       }
 
-      const currency = this.wooClient.getCurrencySymbol();
-
-      const formatted = result.products.map((p) => ({
-        id: p.id,
-        nombre: p.name,
-        precio: p.on_sale
-          ? `${currency}${p.sale_price} (antes ${currency}${p.regular_price})`
-          : `${currency}${p.price}`,
-        disponible: p.stock_status === 'instock',
-        stock: p.stock_quantity,
-        categorias: p.categories.map((c) => c.name).join(', '),
-        imagen: p.images[0]?.src || null,
-        url: p.permalink,
-      }));
-
-      const isPartialMatch = queryAmpliado !== null || result.usedFallback;
+      const isPartialMatch = result.usedFallback;
 
       if (isPartialMatch) {
         const payload = {
           status: 'partial_match' as const,
           query_original: query,
-          query_usado: queryAmpliado || query,
-          nota: queryAmpliado
-            ? `No se encontraron productos para "${query}". Se muestran resultados similares para "${queryAmpliado}".`
-            : `No se encontraron productos que coincidan exactamente con todas las palabras de "${query}". Se muestran los resultados más relevantes del motor de búsqueda.`,
-          productos: formatted,
+          nota: `No se encontraron productos exactos para "${query}". Se muestran resultados similares.`,
+          productos: result.products,
         };
-        return JSON.stringify(payload, null, 2);
+        return JSON.stringify(payload);
       }
 
-      return JSON.stringify(formatted, null, 2);
+      return JSON.stringify(result.products);
     } catch (error) {
       this.logger.error(
         `Error en la herramienta buscar_productos: ${(error as Error).message}`,
@@ -413,7 +248,10 @@ export class VerStockTool extends BaseTool {
   readonly name = 'ver_stock';
   readonly inputSchema = verStockSchema;
 
-  constructor(private readonly wooClient: WooCommerceClient) {
+  constructor(
+    @Inject(COMMERCE_CONNECTOR_TOKEN)
+    private readonly commerce: ICommerceConnector,
+  ) {
     super();
   }
 
@@ -448,22 +286,8 @@ export class VerStockTool extends BaseTool {
     if (isNaN(productId)) return 'Error: producto_id inválido.';
 
     try {
-      const p = await this.wooClient.get<WooProduct>(
-        tenantId,
-        `products/${productId}`,
-      );
-
-      const stockInfo = {
-        id: p.id,
-        nombre: p.name,
-        disponible: p.stock_status === 'instock',
-        stock:
-          p.stock_quantity !== null
-            ? p.stock_quantity
-            : 'Ilimitado / Sin control detallado',
-      };
-
-      return JSON.stringify(stockInfo, null, 2);
+      const stockInfo = await this.commerce.getProductStock(tenantId, productId);
+      return JSON.stringify(stockInfo);
     } catch (error) {
       this.logger.error(
         `Error en la herramienta ver_stock: ${(error as Error).message}`,
@@ -481,7 +305,10 @@ export class VerEstadoPedidoTool extends BaseTool {
   readonly name = 'ver_estado_pedido';
   readonly inputSchema = verEstadoPedidoSchema;
 
-  constructor(private readonly wooClient: WooCommerceClient) {
+  constructor(
+    @Inject(COMMERCE_CONNECTOR_TOKEN)
+    private readonly commerce: ICommerceConnector,
+  ) {
     super();
   }
 
@@ -523,35 +350,11 @@ export class VerEstadoPedidoTool extends BaseTool {
       return 'Error: el correo electrónico es obligatorio para validación de seguridad.';
 
     try {
-      const order = await this.wooClient.get<WooOrder>(
-        tenantId,
-        `orders/${orderId}`,
-      );
-
-      const billingEmail = String(order.billing?.email || '')
-        .trim()
-        .toLowerCase();
-      if (billingEmail !== email) {
-        this.logger.warn(
-          `Intento de acceso denegado a orden ${orderId}: correo "${email}" no coincide con "${billingEmail}"`,
-        );
-        return 'Acceso denegado: El correo electrónico provisto no coincide con el correo de facturación de esta orden.';
+      const orderResult = await this.commerce.getOrderState(tenantId, orderId, email);
+      if (typeof orderResult === 'string') {
+        return orderResult;
       }
-
-      const formattedOrder = {
-        id: order.id,
-        estado: order.status,
-        total: `${this.wooClient.getCurrencySymbol()}${order.total}`,
-        metodo_pago: order.payment_method_title,
-        fecha: order.date_created,
-        items: order.line_items.map((item) => ({
-          producto: item.name,
-          cantidad: item.quantity,
-          total: `${this.wooClient.getCurrencySymbol()}${item.total}`,
-        })),
-      };
-
-      return JSON.stringify(formattedOrder, null, 2);
+      return JSON.stringify(orderResult);
     } catch (error) {
       this.logger.error(
         `Error en la herramienta ver_estado_pedido: ${(error as Error).message}`,
@@ -569,7 +372,10 @@ export class ObtenerCategoriasTool extends BaseTool {
   readonly name = 'obtener_categorias';
   readonly inputSchema = obtenerCategoriasSchema;
 
-  constructor(private readonly wooClient: WooCommerceClient) {
+  constructor(
+    @Inject(COMMERCE_CONNECTOR_TOKEN)
+    private readonly commerce: ICommerceConnector,
+  ) {
     super();
   }
 
@@ -590,23 +396,8 @@ export class ObtenerCategoriasTool extends BaseTool {
     if (!tenantId) return 'Error: falta tenant_id.';
 
     try {
-      const categories = await this.wooClient.get<WooCategory[]>(
-        tenantId,
-        'products/categories',
-        {
-          per_page: '100',
-          hide_empty: 'true',
-        },
-      );
-
-      const formatted = categories.map((c) => ({
-        id: c.id,
-        nombre: c.name,
-        slug: c.slug,
-        total_productos: c.count,
-      }));
-
-      return JSON.stringify(formatted, null, 2);
+      const categories = await this.commerce.getCategories(tenantId);
+      return JSON.stringify(categories);
     } catch (error) {
       this.logger.error(
         `Error en la herramienta obtener_categorias: ${(error as Error).message}`,
@@ -665,6 +456,6 @@ export class AgregarAlCarritoTool extends BaseTool {
       mensaje: `Solicitud procesada: se agregará el producto ID ${productId} (cantidad: ${quantity}) al carrito del cliente.`,
     };
 
-    return JSON.stringify(resultPayload, null, 2);
+    return JSON.stringify(resultPayload);
   }
 }

@@ -1,8 +1,7 @@
 import { Module } from '@nestjs/common';
-import { CryptoModule } from '../common/crypto/crypto.module.js'; // Importamos el CryptoModule para poder usar el CryptoService en los tools que lo requieran
+import { CommerceModule } from '../commerce/commerce.module.js';
 import { ToolsRegistry } from './tools.registry.js';
 import {
-  WooCommerceClient,
   BuscarProductosTool,
   VerStockTool,
   VerEstadoPedidoTool,
@@ -12,9 +11,8 @@ import {
 import { ClarificationTool } from './general/clarification.tool.js';
 
 @Module({
-  imports: [CryptoModule], // Importamos el CryptoModule para poder usar el CryptoService en los tools que lo requieran
+  imports: [CommerceModule],
   providers: [
-    WooCommerceClient,
     BuscarProductosTool,
     VerStockTool,
     VerEstadoPedidoTool,

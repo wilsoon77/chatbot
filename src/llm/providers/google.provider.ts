@@ -170,11 +170,37 @@ export class GoogleProvider implements ILlmProvider {
           parts: [{ text: msg.content }],
         });
       } else if (msg.role === 'assistant') {
+        const parts: any[] = [];
+        if (msg.content) {
+          parts.push({ text: msg.content });
+        }
+        if (msg.toolCalls && msg.toolCalls.length > 0) {
+          for (const tc of msg.toolCalls) {
+            parts.push({
+              functionCall: {
+                name: tc.name,
+                args: tc.args,
+                id: tc.id,
+              },
+            });
+          }
+        }
+        if (parts.length === 0) {
+          parts.push({ text: '' });
+        }
         contents.push({
           role: 'model',
-          parts: [{ text: msg.content ?? '' }],
+          parts,
         });
       } else if (msg.role === 'tool') {
+        let responsePayload: Record<string, unknown>;
+        const contentStr = msg.content || '{}';
+        try {
+          responsePayload = JSON.parse(contentStr);
+        } catch {
+          responsePayload = { result: contentStr };
+        }
+
         // Gemini espera functionResponse dentro de un part con rol 'user'
         contents.push({
           role: 'user',
@@ -182,7 +208,7 @@ export class GoogleProvider implements ILlmProvider {
             {
               functionResponse: {
                 name: msg.toolName || 'unknown',
-                response: { result: msg.content },
+                response: responsePayload,
                 id: msg.toolCallId,
               },
             },

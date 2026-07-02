@@ -2,9 +2,8 @@ import { z } from 'zod';
 
 export const buscarProductosSchema = z.object({
   query: z.string({
-    required_error: 'El parámetro "query" es obligatorio.',
     invalid_type_error: 'El parámetro "query" debe ser un texto.',
-  }).trim().min(1, 'El parámetro "query" no puede estar vacío.'),
+  }).trim().min(1, 'El parámetro "query" no puede estar vacío.').optional(),
   
   categoria: z.union([z.string(), z.number()]).optional().refine(
     (val) => {

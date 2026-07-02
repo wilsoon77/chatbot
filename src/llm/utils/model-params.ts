@@ -28,3 +28,24 @@ export function resolveTemperature(): number {
   }
   return raw;
 }
+
+/**
+ * Timeout por defecto para una llamada al LLM (en milisegundos).
+ * 120s es seguro para modelos locales grandes (ej: Qwen3 32B) que pueden
+ * tardar bastante vía tunel (ngrok) o en hardware modesto.
+ */
+export const DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
+ * Resuelve el timeout desde la variable de entorno `LLM_TIMEOUT_MS`.
+ * Permite ajustar el tiempo máximo de espera por llamada sin tocar código —
+ * útil para pruebas con modelos autoalojados de distintos tamaños/latencias.
+ * Si el valor no es válido o no está seteado, usa el default de 120s.
+ */
+export function resolveTimeoutMs(): number {
+  const raw = Number(process.env.LLM_TIMEOUT_MS);
+  if (Number.isNaN(raw) || raw <= 0) {
+    return DEFAULT_TIMEOUT_MS;
+  }
+  return raw;
+}

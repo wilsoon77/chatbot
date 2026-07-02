@@ -11,6 +11,7 @@ import { IntentRouterService } from './intent-router.service.js';
 import type { IntentClassification } from './intent-router.service.js';
 import { HistoryWindowService } from './history-window.service.js';
 import { buildSystemPrompt } from './prompts/system-prompt.template.js';
+import { removeDiacritics } from '../tools/woocommerce/woocommerce.tool.js';
 
 /**
  * Prefijo del mensaje de contexto de productos que inyecta
@@ -107,9 +108,9 @@ export class ChatService {
       return { reply };
     }
 
-    let loopReply: string | null;
+    let loopResult: { text: string | null; executedTools: boolean };
     try {
-      loopReply = await this.runAgenticLoop(
+      loopResult = await this.runAgenticLoop(
         tenant,
         sessionId,
         messages,
@@ -130,8 +131,17 @@ export class ChatService {
       throw e;
     }
 
-    // La respuesta ya fue generada por el agentic loop — no se necesita otra llamada al LLM
-    const rawReply = loopReply || 'Lo siento, no pude generar una respuesta.';
+    let rawReply = '';
+    if (loopResult.text !== null) {
+      rawReply = loopResult.text;
+    } else if (loopResult.executedTools) {
+      this.logger.debug('Generando respuesta final síncrona tras ejecución de herramientas');
+      const finalResponse = await this.llmService.chat(messages, []);
+      rawReply = finalResponse.text || '';
+    } else {
+      rawReply = 'Lo siento, no pude generar una respuesta.';
+    }
+
     const reply = this.outputGuard.sanitize(rawReply, tenant.woocommerceUrl);
 
     const assistantMsg: Message = { role: 'assistant', content: reply };
@@ -233,9 +243,9 @@ export class ChatService {
       return;
     }
 
-    let loopReply: string | null;
+    let loopResult: { text: string | null; executedTools: boolean };
     try {
-      loopReply = await this.runAgenticLoop(
+      loopResult = await this.runAgenticLoop(
         tenant,
         sessionId,
         messages,
@@ -265,22 +275,25 @@ export class ChatService {
       await onAction(pendingActionContainer.action);
     }
 
-    // La respuesta ya fue generada por el agentic loop — emitir tokens vía SSE
+    // La respuesta ya fue generada por el agentic loop o se generará en streaming
     let fullReply = '';
 
-    if (loopReply) {
-      // Texto ya generado en el loop: emitir palabra por palabra para efecto de streaming
-      fullReply = loopReply;
-      const tokens = loopReply.match(/\S+\s*/g) || [loopReply];
+    if (loopResult.text !== null) {
+      // Sanitizar la respuesta completa generada por el loop antes de emitirla al cliente
+      const sanitizedReply = this.outputGuard.sanitize(loopResult.text, tenant.woocommerceUrl);
+      fullReply = sanitizedReply;
+      
+      // Emitir palabra por palabra para efecto de streaming
+      const tokens = sanitizedReply.match(/\S+\s*/g) || [sanitizedReply];
       for (const token of tokens) {
         const cleanToken = token.replace(this.outputGuard.EMOJI_REGEX, '');
         if (cleanToken) {
           await onToken(cleanToken);
         }
       }
-    } else {
-      // Fallback: si el loop no retornó texto, hacer streaming normal
-      this.logger.warn('El agentic loop no retornó texto — usando chatStream como fallback');
+    } else if (loopResult.executedTools) {
+      // Generar la respuesta final en streaming real usando chatStream
+      this.logger.log('Generando respuesta final en streaming real tras herramientas...');
       const stream = await this.llmService.chatStream(messages);
       for await (const token of stream) {
         fullReply += token;
@@ -289,11 +302,14 @@ export class ChatService {
           await onToken(cleanToken);
         }
       }
+      // Sanitizar la salida completa al final
+      fullReply = this.outputGuard.sanitize(fullReply, tenant.woocommerceUrl);
+    } else {
+      // Fallback
+      fullReply = 'Lo siento, no pude generar una respuesta.';
     }
 
-    // Sanitizar la respuesta completa acumulada antes de guardarla en la sesión de Redis
-    const sanitizedReply = this.outputGuard.sanitize(fullReply, tenant.woocommerceUrl);
-    const assistantMsg: Message = { role: 'assistant', content: sanitizedReply };
+    const assistantMsg: Message = { role: 'assistant', content: fullReply };
     messages.push(assistantMsg);
 
     // Guardar historial completo al final
@@ -350,7 +366,7 @@ export class ChatService {
     const stopwords =
       /^(?:quiero|busc[aá]r?|busco|necesito|ver|tienen|hay|alguno|alguna|algunos|algunas|un|una|unos|unas|el|la|los|las|de|del|para|por\s+favor|me\s+pueden|me\s+puedes|dame|muestra|mostrar|comprar|precio|cu[aá]nto|cuesta|vale|cual|cu[aá]l)\b/gi;
 
-    const cleaned = userText
+    const cleaned = removeDiacritics(userText)
       .replace(/[^\p{L}\p{N}\s]/gu, ' ') // solo letras/números/espacios
       .replace(/\s+/g, ' ')
       .trim()
@@ -528,12 +544,13 @@ export class ChatService {
     lastFoundProductsContainer: { products?: any[] },
     pendingActionContainer: { action?: any },
     intent: IntentClassification,
-  ): Promise<string | null> {
+  ): Promise<{ text: string | null; executedTools: boolean }> {
     const toolDefinitions = this.toolsRegistry.getToolDefinitions(tenant.enabledTools);
     let toolCallCount = 0;
     // Estado por turno: si ya se ejecutó buscar_productos (lo usa el guard de
     // existencia para forzar una búsqueda antes de permitir pedir_aclaracion).
     let searchAttempted = false;
+    let executedTools = false;
 
     while (true) {
       this.logger.debug(
@@ -545,7 +562,7 @@ export class ChatService {
       if (!llmResponse.hasToolCalls) {
         // Retornar el texto generado por el LLM en lugar de descartarlo
         this.logger.debug('Agentic loop finalizado — respuesta de texto obtenida');
-        return llmResponse.text || null;
+        return { text: llmResponse.text || null, executedTools };
       }
 
       // Control de seguridad contra bucles infinitos de llamadas a herramientas
@@ -653,7 +670,7 @@ export class ChatService {
               this.logger.debug(
                 `Cortocircuitando agentic loop por aclaración: "${parsed.pregunta}"`,
               );
-              return parsed.pregunta;
+              return { text: parsed.pregunta, executedTools: true };
             }
           } catch (e) {
             // Ignora fallos de parseo
@@ -710,6 +727,11 @@ export class ChatService {
         };
         messages.push(toolResultMsg);
       }
+
+      // Salir inmediatamente tras procesar las herramientas del primer turno.
+      // De esta forma el llamador podrá generar la respuesta final de forma síncrona o streaming real.
+      this.logger.debug('Herramientas ejecutadas en este turno — saliendo del loop de tools');
+      return { text: null, executedTools: true };
     }
   }
 }
