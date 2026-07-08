@@ -1,11 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { WooCommerceClient } from '../../tools/woocommerce/woocommerce.tool.js';
-import type {
+import { Logger } from '@nestjs/common';
+import {
   ICommerceConnector,
   ProductDto,
-  OrderDto,
   CategoryDto,
+  OrderDto,
 } from '../commerce.interfaces.js';
+
+interface WooCredentials {
+  url: string;            // URL de la tienda
+  consumerKey: string;    // ck_...
+  consumerSecret: string; // cs_...
+  currency?: string;      // Símbolo de moneda (default: $)
+}
 
 interface WooProduct {
   id: number;
@@ -39,6 +45,7 @@ interface WooOrder {
     name: string;
     quantity: number;
     total: string;
+    price: number | string;
   }>;
 }
 
@@ -51,6 +58,22 @@ interface WooCategory {
 
 function removeDiacritics(str: string): string {
   return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function singularize(word: string): string {
+  const w = word.trim().toLowerCase();
+  // Evitar singularizar palabras muy cortas (ej: "es", "os", "as")
+  if (w.length <= 3) return word;
+  
+  if (w.endsWith('es')) {
+    // Ejemplo: monitores -> monitor, cables -> cable, celulares -> celular
+    return word.slice(0, -2);
+  }
+  if (w.endsWith('s') && !w.endsWith('is') && !w.endsWith('as') && !w.endsWith('us')) {
+    // Ejemplo: teclados -> teclado, mouses -> mouse
+    return word.slice(0, -1);
+  }
+  return word;
 }
 
 function levenshtein(a: string, b: string): number {
@@ -70,8 +93,8 @@ function levenshtein(a: string, b: string): number {
           tmp[i - 1][j - 1] + 1, // sustitución
           Math.min(
             tmp[i][j - 1] + 1, // inserción
-            tmp[i - 1][j] + 1  // eliminación
-          )
+            tmp[i - 1][j] + 1, // eliminación
+          ),
         );
       }
     }
@@ -111,19 +134,79 @@ function buildSearchableText(p: WooProduct): string {
   return removeDiacritics(stripHtml(parts.join(' ')).toLowerCase());
 }
 
-@Injectable()
 export class WooCommerceConnector implements ICommerceConnector {
+  readonly connectorName = 'WooCommerce';
   private readonly logger = new Logger(WooCommerceConnector.name);
+  private readonly currency: string;
+  private categoriesCache: WooCategory[] | null = null;
 
-  constructor(private readonly wooClient: WooCommerceClient) {}
+  constructor(private readonly creds: WooCredentials) {
+    this.currency = creds.currency || '$';
+  }
 
-  async searchProducts(
-    tenantId: string,
+  /**
+   * Resuelve un valor de categoría (que puede ser un ID numérico o un nombre)
+   * al ID numérico que espera la API de WooCommerce.
+   * Si es un nombre, consulta las categorías (con caché) y busca por coincidencia fuzzy.
+   */
+  private async resolveCategoryId(catValue: string): Promise<string | undefined> {
+    const trimmed = catValue.trim();
+    if (!trimmed) return undefined;
+
+    // Si ya es numérico, devolver directamente
+    if (/^\d+$/.test(trimmed)) return trimmed;
+
+    // Es un nombre de categoría — resolver a ID
+    this.logger.debug(`Categoría "${trimmed}" no es numérica. Intentando resolver por nombre...`);
+
+    if (!this.categoriesCache) {
+      try {
+        this.categoriesCache = await this.get<WooCategory[]>('products/categories', {
+          per_page: '100',
+          hide_empty: 'true',
+        });
+      } catch (err) {
+        this.logger.warn(`No se pudieron obtener categorías para resolver nombre: ${(err as Error).message}`);
+        return undefined;
+      }
+    }
+
+    const normalizedInput = removeDiacritics(trimmed.toLowerCase());
+
+    // Búsqueda exacta primero
+    const exact = this.categoriesCache.find(
+      (c) => removeDiacritics(c.name.toLowerCase()) === normalizedInput,
+    );
+    if (exact) {
+      this.logger.debug(`Categoría resuelta: "${trimmed}" → ID ${exact.id} ("${exact.name}")`);
+      return String(exact.id);
+    }
+
+    // Búsqueda parcial (la entrada está contenida en el nombre o viceversa)
+    const partial = this.categoriesCache.find((c) => {
+      const norm = removeDiacritics(c.name.toLowerCase());
+      return norm.includes(normalizedInput) || normalizedInput.includes(norm);
+    });
+    if (partial) {
+      this.logger.debug(`Categoría resuelta (parcial): "${trimmed}" → ID ${partial.id} ("${partial.name}")`);
+      return String(partial.id);
+    }
+
+    this.logger.warn(`No se encontró categoría para el nombre "${trimmed}".`);
+    return undefined;
+  }
+
+  async buscarProductos(
     query: string,
-    categoryId?: string,
-    limit?: number,
-  ): Promise<{ products: ProductDto[]; usedFallback: boolean } | null> {
-    const limite = Math.min(limit || 5, 10);
+    opciones: { limite?: number; categoria?: string } = {},
+  ): Promise<ProductDto[]> {
+    const limite = Math.min(opciones.limite || 5, 10);
+    const queryStr = query.trim();
+
+    // Resolver categoría (soporta tanto ID numérico como nombre)
+    const resolvedCategory = opciones.categoria
+      ? await this.resolveCategoryId(opciones.categoria)
+      : undefined;
 
     const buildParams = (searchTerm: string): Record<string, string> => {
       const p: Record<string, string> = {
@@ -133,12 +216,9 @@ export class WooCommerceConnector implements ICommerceConnector {
       if (searchTerm) {
         p.search = searchTerm;
       }
-      if (categoryId) {
-        const cat = categoryId.trim();
-        if (/^\d+$/.test(cat)) {
-          p.category = cat;
-          this.logger.debug(`Filtrando por categoría ID: ${cat}`);
-        }
+      if (resolvedCategory) {
+        p.category = resolvedCategory;
+        this.logger.debug(`Filtrando por categoría ID: ${resolvedCategory}`);
       }
       return p;
     };
@@ -146,18 +226,13 @@ export class WooCommerceConnector implements ICommerceConnector {
     const searchWoo = async (
       searchTerm: string,
       filterQuery?: string,
-    ): Promise<{ products: WooProduct[]; usedFallback: boolean } | null> => {
-      const products = await this.wooClient.get<WooProduct[]>(
-        tenantId,
-        'products',
-        buildParams(searchTerm),
-      );
+    ): Promise<WooProduct[] | null> => {
+      const products = await this.get<WooProduct[]>('products', buildParams(searchTerm));
       if (!products || products.length === 0) {
         return null;
       }
 
       const activeFilterQuery = filterQuery !== undefined ? filterQuery : searchTerm;
-
       if (activeFilterQuery.length > 0) {
         const stopWords = ['con', 'de', 'para', 'y', 'o', 'un', 'una', 'el', 'la', 'los', 'las', 'del', 'al', 'en'];
         const tokens = removeDiacritics(activeFilterQuery.toLowerCase())
@@ -165,7 +240,7 @@ export class WooCommerceConnector implements ICommerceConnector {
           .filter((t) => t.length > 0 && !stopWords.includes(t));
 
         if (tokens.length === 0) {
-          return { products: products.slice(0, limite), usedFallback: false };
+          return products.slice(0, limite);
         }
 
         const matchesAllTokens = (p: WooProduct) => {
@@ -176,13 +251,14 @@ export class WooCommerceConnector implements ICommerceConnector {
 
         const filtered = products.filter((p) => matchesAllTokens(p));
         if (filtered.length > 0) {
-          return { products: filtered.slice(0, limite), usedFallback: false };
+          return filtered.slice(0, limite);
         }
 
         if (filterQuery !== undefined) {
           return null;
         }
 
+        // Lógica de coincidencia parcial (50% de relevancia)
         const matchesPartialTokens = (p: WooProduct) => {
           const haystack = buildSearchableText(p);
           const haystackWords = haystack.split(/\s+/);
@@ -193,122 +269,145 @@ export class WooCommerceConnector implements ICommerceConnector {
         const partialFiltered = products.filter((p) => matchesPartialTokens(p));
         if (partialFiltered.length > 0) {
           this.logger.warn(
-            `Filtro exacto fallido para "${activeFilterQuery}". Devolviendo coincidencias parciales.`
+            `Filtro exacto fallido para "${activeFilterQuery}". Devolviendo coincidencias parciales.`,
           );
-          return { products: partialFiltered.slice(0, limite), usedFallback: true };
+          return partialFiltered.slice(0, limite);
         }
 
         this.logger.warn(
-          `Ningún producto superó el umbral del 50% de relevancia para "${activeFilterQuery}". Retornando null.`
+          `Ningún producto superó el umbral del 50% de relevancia para "${activeFilterQuery}". Retornando vacío.`,
         );
         return null;
       }
-      return { products: products.slice(0, limite), usedFallback: false };
+
+      return products.slice(0, limite);
     };
 
-    let result = await searchWoo(query);
-
+    let result = await searchWoo(queryStr);
     let queryAmpliado: string | null = null;
-    if (!result && query.includes(' ')) {
-      queryAmpliado = query.split(/\s+/)[0];
+
+    // Fallback 1: Si no hay resultados y la palabra tiene terminación plural, intentamos singularizar
+    if (!result && queryStr.length > 3) {
+      const singular = singularize(queryStr);
+      if (singular !== queryStr) {
+        this.logger.debug(
+          `Sin resultados para "${queryStr}". Reintentando en singular con "${singular}".`,
+        );
+        result = await searchWoo(singular, queryStr);
+      }
+    }
+
+    // Fallback 2: Si aún no hay resultados y contiene múltiples palabras, reintentamos con la primera palabra
+    if (!result && queryStr.includes(' ')) {
+      queryAmpliado = queryStr.split(/\s+/)[0];
       this.logger.debug(
-        `Sin resultados para "${query}". Reintentando con término base "${queryAmpliado}".`,
+        `Sin resultados para "${queryStr}". Reintentando con término base "${queryAmpliado}".`,
       );
-      result = await searchWoo(queryAmpliado, query);
+      result = await searchWoo(queryAmpliado, queryStr);
     }
 
-    if (!result) return null;
+    if (!result) return [];
 
-    const currency = this.wooClient.getCurrencySymbol();
-    const formatted: ProductDto[] = result.products.map((p) => ({
-      id: p.id,
-      nombre: p.name,
-      precio: p.on_sale
-        ? `${currency}${p.sale_price} (antes ${currency}${p.regular_price})`
-        : `${currency}${p.price}`,
-      disponible: p.stock_status === 'instock',
-      stock: p.stock_quantity,
-      categorias: p.categories.map((c) => c.name).join(', '),
-      imagen: p.images[0]?.src || null,
-      url: p.permalink,
+    return result.map((p) => this.toCanonicalProduct(p));
+  }
+
+  async obtenerCategorias(): Promise<CategoryDto[]> {
+    const raw = await this.get<WooCategory[]>('products/categories', {
+      per_page: '100',
+      hide_empty: 'true',
+    });
+
+    return raw.map((c) => ({
+      id: String(c.id),
+      nombre: c.name,
+      cantidad: c.count,
     }));
-
-    return {
-      products: formatted,
-      usedFallback: queryAmpliado !== null || result.usedFallback,
-    };
   }
 
-  async getProductStock(
-    tenantId: string,
-    productId: number,
-  ): Promise<{ id: number; nombre: string; disponible: boolean; stock: number | string }> {
-    const p = await this.wooClient.get<WooProduct>(
-      tenantId,
-      `products/${productId}`,
-    );
-
+  async verStock(productoId: string): Promise<Pick<ProductDto, 'id' | 'nombre' | 'disponible' | 'stock'>> {
+    const p = await this.get<WooProduct>(`products/${productoId}`);
     return {
-      id: p.id,
+      id: String(p.id),
       nombre: p.name,
       disponible: p.stock_status === 'instock',
-      stock:
-        p.stock_quantity !== null
-          ? p.stock_quantity
-          : 'Ilimitado / Sin control detallado',
+      stock: p.stock_quantity ?? null,
     };
   }
 
-  async getOrderState(
-    tenantId: string,
-    orderId: number,
-    email: string,
-  ): Promise<OrderDto | string> {
-    const order = await this.wooClient.get<WooOrder>(
-      tenantId,
-      `orders/${orderId}`,
-    );
-
-    const billingEmail = String(order.billing?.email || '')
-      .trim()
-      .toLowerCase();
-    if (billingEmail !== email) {
-      this.logger.warn(
-        `Intento de acceso denegado a orden ${orderId}: correo "${email}" no coincide con "${billingEmail}"`,
-      );
-      return 'Acceso denegado: El correo electrónico provisto no coincide con el correo de facturación de esta orden.';
-    }
-
-    const currency = this.wooClient.getCurrencySymbol();
+  async verEstadoPedido(pedidoId: string): Promise<OrderDto> {
+    const o = await this.get<WooOrder>(`orders/${pedidoId}`);
     return {
-      id: order.id,
-      estado: order.status,
-      total: `${currency}${order.total}`,
-      metodo_pago: order.payment_method_title,
-      fecha: order.date_created,
-      items: order.line_items.map((item) => ({
-        producto: item.name,
-        cantidad: item.quantity,
-        total: `${currency}${item.total}`,
+      id: String(o.id),
+      estado: o.status,
+      total: `${this.currency}${o.total}`,
+      fecha: o.date_created,
+      items: (o.line_items || []).map((i) => ({
+        nombre: i.name,
+        cantidad: i.quantity,
+        precio: `${this.currency}${i.price || '0.00'}`,
       })),
     };
   }
 
-  async getCategories(tenantId: string): Promise<CategoryDto[]> {
-    const categories = await this.wooClient.get<WooCategory[]>(
-      tenantId,
-      'products/categories',
-      {
-        per_page: '100',
-        hide_empty: 'true',
-      },
-    );
+  async healthCheck(): Promise<boolean> {
+    try {
+      await this.get('system_status');
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
-    return categories.map((c) => ({
-      id: c.id,
-      nombre: c.name,
-      slug: c.slug,
-      total_productos: c.count,
-    }));
+  // ─── HTTP Helper ───────────────────────────────────────────
+
+  private async get<T>(endpoint: string, params: Record<string, string> = {}): Promise<T> {
+    // Limpiar url base si tiene barras al final
+    let baseUrl = this.creds.url.trim();
+    if (baseUrl.endsWith('/')) {
+      baseUrl = baseUrl.substring(0, baseUrl.length - 1);
+    }
+
+    const url = new URL(`${baseUrl}/wp-json/wc/v3/${endpoint}`);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+
+    this.logger.debug(`WooCommerce GET: ${url.pathname}${url.search}`);
+
+    // Cifrar credenciales en Base64 para Basic Auth
+    const credentialsBase64 = Buffer.from(
+      `${this.creds.consumerKey}:${this.creds.consumerSecret}`,
+    ).toString('base64');
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        Authorization: `Basic ${credentialsBase64}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'ChatbotWoo/2.0',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`WooCommerce API error ${response.status}: ${await response.text()}`);
+    }
+
+    return response.json() as Promise<T>;
+  }
+
+  private toCanonicalProduct(p: WooProduct): ProductDto {
+    return {
+      id: String(p.id),
+      nombre: p.name,
+      precio: p.on_sale
+        ? `${this.currency}${p.sale_price} (antes ${this.currency}${p.regular_price})`
+        : `${this.currency}${p.price}`,
+      disponible: p.stock_status === 'instock',
+      stock: p.stock_quantity ?? null,
+      categorias: (p.categories || []).map((c) => c.name),
+      imagen: p.images?.[0]?.src || null,
+      url: p.permalink || null,
+      sku: p.sku || null,
+      descripcion: p.short_description
+        ? p.short_description.replace(/<[^>]*>/g, '')
+        : null,
+    };
   }
 }

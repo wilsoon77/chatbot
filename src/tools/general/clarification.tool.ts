@@ -16,6 +16,7 @@ export const pedirAclaracionSchema = z.object({
 export class ClarificationTool extends BaseTool {
   readonly name = 'pedir_aclaracion';
   readonly inputSchema = pedirAclaracionSchema;
+  readonly promptDescription = 'pedir aclaración cuando falta un dato obligatorio';
 
   getDefinition(): ToolDefinition {
     return {

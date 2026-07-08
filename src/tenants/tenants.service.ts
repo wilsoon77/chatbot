@@ -3,41 +3,95 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { CryptoService } from '../common/crypto/crypto.service';
-
-
+import { ConnectorRegistry } from '../commerce/connector.registry';
 
 @Injectable()
 export class TenantsService {
   constructor(
     private prisma: PrismaService,
     private cryptoService: CryptoService,
+    private connectorRegistry: ConnectorRegistry,
   ) {}
 
-  private sanitizeTenant<T extends { consumerKey?: string; consumerSecret?: string }>(
-    tenant: T | null,
-  ) {
+  private sanitizeTenant<T>(tenant: T | null) {
     if (!tenant) return null;
-    const { consumerKey, consumerSecret, ...safeTenant } = tenant as any;
+    const { ...safeTenant } = tenant as any;
+    delete safeTenant.consumerKey;
+    delete safeTenant.consumerSecret;
     return safeTenant;
   }
 
   async create(data: CreateTenantDto) {
-    const encryptedData = {
-      ...data,
-      consumerKey: this.cryptoService.encrypt(data.consumerKey),
-      consumerSecret: this.cryptoService.encrypt(data.consumerSecret),
-    };
-
+    // 1. Crear el Tenant
     const tenant = await this.prisma.tenant.create({
-      data: encryptedData,
+      data: {
+        nombre: data.nombre,
+        systemPrompt: data.systemPrompt,
+        redisTTL: data.redisTTL,
+      },
     });
 
-    return this.sanitizeTenant(tenant);
+    // 2. Cifrar las credenciales de WooCommerce
+    const credsObj = {
+      url: data.woocommerceUrl,
+      consumerKey: data.consumerKey,
+      consumerSecret: data.consumerSecret,
+    };
+    const encryptedCredentials = this.cryptoService.encrypt(JSON.stringify(credsObj));
+
+    // 3. Crear ConnectorConfig relacionado
+    await this.prisma.connectorConfig.create({
+      data: {
+        tenantId: tenant.id,
+        type: 'WOOCOMMERCE',
+        credentialsJson: encryptedCredentials,
+        enabledToolsJson: JSON.stringify(data.enabledTools || []),
+        isDefault: true,
+        isActive: true,
+      },
+    });
+
+    return {
+      ...tenant,
+      woocommerceUrl: data.woocommerceUrl,
+      consumerKey: '••••••••',
+      consumerSecret: '••••••••',
+      enabledTools: data.enabledTools,
+    };
   }
 
   async findAll() {
     const tenants = await this.prisma.tenant.findMany();
-    return tenants.map((tenant) => this.sanitizeTenant(tenant));
+    const result = [];
+
+    for (const tenant of tenants) {
+      const config = await this.prisma.connectorConfig.findFirst({
+        where: { tenantId: tenant.id, isDefault: true },
+      });
+
+      let woocommerceUrl = '';
+      let enabledTools: string[] = [];
+
+      if (config) {
+        try {
+          const creds = JSON.parse(this.cryptoService.decrypt(config.credentialsJson));
+          woocommerceUrl = creds.url || '';
+        } catch {}
+        try {
+          enabledTools = JSON.parse(config.enabledToolsJson);
+        } catch {}
+      }
+
+      result.push({
+        ...tenant,
+        woocommerceUrl,
+        consumerKey: '••••••••',
+        consumerSecret: '••••••••',
+        enabledTools,
+      });
+    }
+
+    return result;
   }
 
   async findOne(id: string) {
@@ -45,7 +99,36 @@ export class TenantsService {
       where: { id },
     });
 
-    return this.sanitizeTenant(tenant);
+    if (!tenant) return null;
+
+    const config = await this.prisma.connectorConfig.findFirst({
+      where: { tenantId: id, isDefault: true },
+    });
+
+    let woocommerceUrl = '';
+    let consumerKey = '';
+    let consumerSecret = '';
+    let enabledTools: string[] = [];
+
+    if (config) {
+      try {
+        const creds = JSON.parse(this.cryptoService.decrypt(config.credentialsJson));
+        woocommerceUrl = creds.url || '';
+        consumerKey = creds.consumerKey || '';
+        consumerSecret = creds.consumerSecret || '';
+      } catch {}
+      try {
+        enabledTools = JSON.parse(config.enabledToolsJson);
+      } catch {}
+    }
+
+    return {
+      ...tenant,
+      woocommerceUrl,
+      consumerKey,
+      consumerSecret,
+      enabledTools,
+    };
   }
 
   async update(id: string, data: UpdateTenantDto) {
@@ -53,22 +136,64 @@ export class TenantsService {
     if (!exists)
       throw new NotFoundException(`Tenant con id "${id}" no encontrado`);
 
-    const dataToUpdate: any = { ...data };
-
-    if (data.consumerKey) {
-      dataToUpdate.consumerKey = this.cryptoService.encrypt(data.consumerKey);
-    }
-
-    if (data.consumerSecret) {
-      dataToUpdate.consumerSecret = this.cryptoService.encrypt(data.consumerSecret);
-    }
-
+    // 1. Actualizar datos base del Tenant
     const updated = await this.prisma.tenant.update({
       where: { id },
-      data: dataToUpdate,
+      data: {
+        nombre: data.nombre,
+        systemPrompt: data.systemPrompt,
+        redisTTL: data.redisTTL,
+      },
     });
 
-    return this.sanitizeTenant(updated);
+    // 2. Obtener o crear ConnectorConfig por defecto
+    let config = await this.prisma.connectorConfig.findFirst({
+      where: { tenantId: id, isDefault: true },
+    });
+
+    let credsObj: any = {};
+    if (config) {
+      credsObj = JSON.parse(this.cryptoService.decrypt(config.credentialsJson));
+    }
+
+    if (data.woocommerceUrl !== undefined) credsObj.url = data.woocommerceUrl;
+    if (data.consumerKey !== undefined) credsObj.consumerKey = data.consumerKey;
+    if (data.consumerSecret !== undefined) credsObj.consumerSecret = data.consumerSecret;
+
+    const encryptedCredentials = this.cryptoService.encrypt(JSON.stringify(credsObj));
+    const enabledToolsJson = data.enabledTools ? JSON.stringify(data.enabledTools) : (config ? config.enabledToolsJson : '[]');
+
+    if (config) {
+      await this.prisma.connectorConfig.update({
+        where: { id: config.id },
+        data: {
+          credentialsJson: encryptedCredentials,
+          enabledToolsJson,
+        },
+      });
+    } else {
+      await this.prisma.connectorConfig.create({
+        data: {
+          tenantId: id,
+          type: 'WOOCOMMERCE',
+          credentialsJson: encryptedCredentials,
+          enabledToolsJson,
+          isDefault: true,
+          isActive: true,
+        },
+      });
+    }
+
+    // Invalidar la caché de conectores en caliente para que se carguen las nuevas credenciales/herramientas inmediatamente
+    this.connectorRegistry.invalidate(id);
+
+    return {
+      ...updated,
+      woocommerceUrl: credsObj.url,
+      consumerKey: '••••••••',
+      consumerSecret: '••••••••',
+      enabledTools: data.enabledTools ? data.enabledTools : (config ? JSON.parse(config.enabledToolsJson) : []),
+    };
   }
 
   async remove(id: string) {
@@ -93,11 +218,10 @@ export class TenantsService {
 
     const updated = await this.prisma.tenant.update({
       where: { id },
-      // tenant may not have isActive typed on the generated type, cast to any
-      data: { isActive: !(tenant as any).isActive },
+      data: { isActive: !tenant.isActive },
     });
 
-    const isActive = (updated as any).isActive;
+    const isActive = updated.isActive;
 
     return {
       id: updated.id,
@@ -107,21 +231,31 @@ export class TenantsService {
     };
   }
 
-  //  uso interno (chat / widget)
+  // uso interno (chat / widget / fallback compatibilidad)
   async getTenantConfig(id: string) {
     const tenant = await this.prisma.tenant.findUnique({
       where: { id },
     });
 
     if (!tenant) return null;
+    if (!tenant.isActive) return null;
 
-    //  bloquea si está desactivado
-    if (!(tenant as any).isActive) return null;
+    // Buscar configuracion
+    const config = await this.prisma.connectorConfig.findFirst({
+      where: { tenantId: id, isDefault: true, isActive: true },
+    });
 
+    if (!config) return null;
+
+    const creds = JSON.parse(this.cryptoService.decrypt(config.credentialsJson));
+
+    // Retornamos aplanado para compatibilidad
     return {
       ...tenant,
-      consumerKey: this.cryptoService.decrypt(tenant.consumerKey),
-      consumerSecret: this.cryptoService.decrypt(tenant.consumerSecret),
+      woocommerceUrl: creds.url,
+      consumerKey: creds.consumerKey,
+      consumerSecret: creds.consumerSecret,
+      enabledTools: JSON.parse(config.enabledToolsJson),
     };
   }
 }

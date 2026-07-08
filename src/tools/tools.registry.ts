@@ -4,11 +4,21 @@ import { BaseTool } from './base.tool.js';
 import {
   BuscarProductosTool,
   VerStockTool,
-  VerEstadoPedidoTool,
   ObtenerCategoriasTool,
   AgregarAlCarritoTool,
 } from './woocommerce/woocommerce.tool.js';
 import { ClarificationTool } from './general/clarification.tool.js';
+
+/**
+ * Información de una tool legible para el system prompt.
+ * Se usa en `buildToolsPolicyBlock` para generar instrucciones dinámicas.
+ */
+export interface ToolInfo {
+  /** Nombre interno de la tool (ej: "buscar_productos") */
+  name: string;
+  /** Descripción corta de la capacidad (1 línea, legible para el prompt) */
+  promptDescription: string;
+}
 
 /**
  * Registry de tools.
@@ -23,7 +33,6 @@ export class ToolsRegistry {
   constructor(
     private readonly buscarProductos: BuscarProductosTool,
     private readonly verStock: VerStockTool,
-    private readonly verEstadoPedido: VerEstadoPedidoTool,
     private readonly obtenerCategorias: ObtenerCategoriasTool,
     private readonly agregarAlCarrito: AgregarAlCarritoTool,
     private readonly pedirAclaracion: ClarificationTool,
@@ -31,7 +40,6 @@ export class ToolsRegistry {
     // Registrar todas las tools disponibles
     this.registerTool(this.buscarProductos);
     this.registerTool(this.verStock);
-    this.registerTool(this.verEstadoPedido);
     this.registerTool(this.obtenerCategorias);
     this.registerTool(this.agregarAlCarrito);
     this.registerTool(this.pedirAclaracion);
@@ -49,7 +57,6 @@ export class ToolsRegistry {
   private static readonly ACTION_TOOLS = [
     'buscar_productos',
     'ver_stock',
-    'ver_estado_pedido',
     'obtener_categorias',
     'agregar_al_carrito',
   ];
@@ -77,6 +84,26 @@ export class ToolsRegistry {
     }
 
     return definitions;
+  }
+
+  /**
+   * Obtiene información legible de las tools habilitadas para un tenant.
+   * Se usa en `buildToolsPolicyBlock` para generar las instrucciones del
+   * system prompt dinámicamente, en vez de hardcodear nombres de tools.
+   *
+   * Solo incluye las tools de acción (no `pedir_aclaracion`, que se inyecta
+   * automáticamente y no necesita instrucciones de "cuándo usarla" aquí).
+   */
+  getEnabledToolInfo(enabledToolNames: string[]): ToolInfo[] {
+    return enabledToolNames
+      .filter((name) => this.tools.has(name) && name !== 'pedir_aclaracion')
+      .map((name) => {
+        const tool = this.tools.get(name)!;
+        return {
+          name: tool.name,
+          promptDescription: tool.promptDescription || tool.getDefinition().description,
+        };
+      });
   }
 
   /**

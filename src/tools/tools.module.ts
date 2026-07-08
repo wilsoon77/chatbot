@@ -4,7 +4,6 @@ import { ToolsRegistry } from './tools.registry.js';
 import {
   BuscarProductosTool,
   VerStockTool,
-  VerEstadoPedidoTool,
   ObtenerCategoriasTool,
   AgregarAlCarritoTool,
 } from './woocommerce/woocommerce.tool.js';
@@ -15,7 +14,6 @@ import { ClarificationTool } from './general/clarification.tool.js';
   providers: [
     BuscarProductosTool,
     VerStockTool,
-    VerEstadoPedidoTool,
     ObtenerCategoriasTool,
     AgregarAlCarritoTool,
     ClarificationTool,

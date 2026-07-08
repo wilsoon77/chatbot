@@ -10,9 +10,10 @@ import { SessionModule } from '../session/session.module.js';
 import { TenantsModule } from '../tenants/tenants.module.js';
 import { ToolsModule } from '../tools/tools.module.js';
 import { GuardrailsModule } from '../guardrails/guardrails.module.js';
+import { CommerceModule } from '../commerce/commerce.module.js';
 
 @Module({
-  imports: [LlmModule, SessionModule, TenantsModule, ToolsModule, GuardrailsModule],
+  imports: [LlmModule, SessionModule, TenantsModule, ToolsModule, GuardrailsModule, CommerceModule],
   controllers: [ChatController, ChatStreamController],
   providers: [ChatService, IntentRouterService, SummaryService, HistoryWindowService],
 })

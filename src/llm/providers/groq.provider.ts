@@ -192,10 +192,34 @@ export class GroqProvider implements ILlmProvider {
       throw new Error('La variable GROQ_API_KEY no está configurada.');
     }
 
-    const openaiMessages = messages.map((msg) => ({
-      role: msg.role === 'system' ? 'system' as const : msg.role === 'user' ? 'user' as const : 'assistant' as const,
-      content: msg.content,
-    }));
+    const openaiMessages = messages.map((msg) => {
+      if (msg.role === 'tool') {
+        return {
+          role: 'tool' as const,
+          content: msg.content,
+          tool_call_id: msg.toolCallId || '',
+          name: msg.toolName || '',
+        };
+      }
+      if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+        return {
+          role: 'assistant' as const,
+          content: null,
+          tool_calls: msg.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: 'function' as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.args),
+            },
+          })),
+        };
+      }
+      return {
+        role: msg.role === 'system' ? 'system' as const : msg.role === 'user' ? 'user' as const : 'assistant' as const,
+        content: msg.content,
+      };
+    });
 
     const body = {
       model: this.model,

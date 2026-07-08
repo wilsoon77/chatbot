@@ -1,54 +1,38 @@
 export interface ProductDto {
-  id: number;
+  id: string;
   nombre: string;
   precio: string;
   disponible: boolean;
-  stock: number | string | null;
-  categorias: string;
+  stock: number | null;
+  categorias: string[];
   imagen: string | null;
-  url: string;
-}
-
-export interface OrderDto {
-  id: number;
-  estado: string;
-  total: string;
-  metodo_pago: string;
-  fecha: string;
-  items: Array<{
-    producto: string;
-    cantidad: number;
-    total: string;
-  }>;
+  url: string | null;
+  sku?: string | null;
+  descripcion?: string | null;
 }
 
 export interface CategoryDto {
-  id: number;
+  id: string;
   nombre: string;
-  slug: string;
-  total_productos: number;
+  cantidad: number;
 }
 
-export const COMMERCE_CONNECTOR_TOKEN = Symbol('ICommerceConnector');
+export interface OrderDto {
+  id: string;
+  estado: string;
+  total: string;
+  fecha: string;
+  items: Array<{ nombre: string; cantidad: number; precio: string }>;
+}
 
 export interface ICommerceConnector {
-  searchProducts(
-    tenantId: string,
+  readonly connectorName: string;
+  buscarProductos(
     query: string,
-    categoryId?: string,
-    limit?: number,
-  ): Promise<{ products: ProductDto[]; usedFallback: boolean } | null>;
-
-  getProductStock(
-    tenantId: string,
-    productId: number,
-  ): Promise<{ id: number; nombre: string; disponible: boolean; stock: number | string }>;
-
-  getOrderState(
-    tenantId: string,
-    orderId: number,
-    email: string,
-  ): Promise<OrderDto | string>;
-
-  getCategories(tenantId: string): Promise<CategoryDto[]>;
+    opciones?: { limite?: number; categoria?: string },
+  ): Promise<ProductDto[]>;
+  obtenerCategorias(): Promise<CategoryDto[]>;
+  verStock(productoId: string): Promise<Pick<ProductDto, 'id' | 'nombre' | 'disponible' | 'stock'>>;
+  verEstadoPedido(pedidoId: string): Promise<OrderDto>;
+  healthCheck(): Promise<boolean>;
 }

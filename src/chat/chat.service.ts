@@ -11,6 +11,8 @@ import { IntentRouterService } from './intent-router.service.js';
 import type { IntentClassification } from './intent-router.service.js';
 import { HistoryWindowService } from './history-window.service.js';
 import { buildSystemPrompt } from './prompts/system-prompt.template.js';
+import type { ToolInfo } from '../tools/tools.registry.js';
+import { ConnectorRegistry } from '../commerce/connector.registry.js';
 import { removeDiacritics } from '../tools/woocommerce/woocommerce.tool.js';
 
 /**
@@ -34,6 +36,7 @@ export class ChatService {
     private readonly sessionService: SessionService,
     private readonly tenantsService: TenantsService,
     private readonly toolsRegistry: ToolsRegistry,
+    private readonly connectorRegistry: ConnectorRegistry,
     private readonly config: ConfigService,
     private readonly inputGuard: InputGuardService,
     private readonly outputGuard: OutputGuardService,
@@ -79,6 +82,7 @@ export class ChatService {
     // Carga asíncronamente el historial de la conversación desde Redis
     const history = await this.sessionService.getHistory(sessionId);
     const messages: Message[] = await this.buildBaseMessages(
+      tenant.id,
       tenant.systemPrompt,
       history,
       cleanUserMessage,
@@ -193,6 +197,7 @@ export class ChatService {
 
     const history = await this.sessionService.getHistory(sessionId);
     const messages: Message[] = await this.buildBaseMessages(
+      tenant.id,
       tenant.systemPrompt,
       history,
       cleanUserMessage,
@@ -383,32 +388,75 @@ export class ChatService {
   }
 
   /**
+   * Detecta si el último mensaje del usuario menciona una categoría del
+   * catálogo pre-cargado en el system prompt. Busca coincidencia fuzzy del
+   * texto del usuario contra los nombres de categorías conocidas.
+   *
+   * Devuelve el nombre de la categoría si hay coincidencia, o null si no.
+   */
+  private detectCategoryMention(
+    messages: Message[],
+    knownCategories: { nombre: string; id: string }[] | null,
+  ): string | null {
+    if (!knownCategories || knownCategories.length === 0) return null;
+
+    // Último mensaje del usuario.
+    let userText = '';
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user' && typeof messages[i].content === 'string') {
+        userText = messages[i].content as string;
+        break;
+      }
+    }
+    if (!userText) return null;
+
+    const normalized = removeDiacritics(userText).toLowerCase();
+
+    // Buscar coincidencia exacta o parcial de un nombre de categoría en el texto.
+    for (const cat of knownCategories) {
+      const catNorm = removeDiacritics(cat.nombre).toLowerCase();
+      if (normalized.includes(catNorm)) {
+        return cat.nombre;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Ejecuta una `buscar_productos` sintética y empuja los mensajes al array
    * (assistant tool-call + tool result) para que el LLM, en la siguiente
    * iteración del loop, vea el resultado de la búsqueda y responda en base a él.
    *
    * Es el mecanismo determinista del guard de existencia: garantiza que la
    * búsqueda ocurre sin depender de que el LLM decida llamarla.
+   *
+   * @param categoria  Nombre o ID de categoría (opcional). Si se pasa, la
+   *                   búsqueda se hace por categoría en vez de por query de texto.
    */
   private async injectSyntheticSearch(
     tenantId: string,
     query: string,
     messages: Message[],
     lastFoundProductsContainer: { products?: any[] },
+    categoria?: string,
   ): Promise<void> {
     const callId = `synth_search_${Date.now()}`;
 
     // Mensaje assistant simulando la llamada a la herramienta.
+    const toolArgs: Record<string, unknown> = {};
+    if (query) toolArgs.query = query;
+    if (categoria) toolArgs.categoria = categoria;
+
     const assistantToolMsg: Message = {
       role: 'assistant',
       content: null,
-      toolCalls: [{ id: callId, name: 'buscar_productos', args: { query } }],
+      toolCalls: [{ id: callId, name: 'buscar_productos', args: toolArgs }],
     };
     messages.push(assistantToolMsg);
 
     // Ejecución real de la herramienta.
     const result = await this.toolsRegistry.executeTool('buscar_productos', {
-      query,
+      ...toolArgs,
       tenant_id: tenantId,
     });
 
@@ -510,6 +558,7 @@ export class ChatService {
    * solo los mensajes recientes + el resumen.
    */
   private async buildBaseMessages(
+    tenantId: string,
     tenantPrompt: string,
     history: Message[],
     userMessage: string,
@@ -519,10 +568,15 @@ export class ChatService {
     const windowed = await this.historyWindow.applyWindow(history, tenantName);
     const messages: Message[] = [];
     // El system prompt final combina la persona del tenant (BD) con el bloque
-    // fijo de política de uso de herramientas (ver prompts/system-prompt.template.ts).
+    // dinámico de política de uso de herramientas (ver prompts/system-prompt.template.ts).
+    // Las instrucciones se generan desde las tools reales habilitadas del tenant.
+    const toolInfo: ToolInfo[] = this.toolsRegistry.getEnabledToolInfo(enabledTools);
+    // Obtener categorías de la tienda para inyectarlas como contexto pre-cargado.
+    // Si falla, se devuelve null y el prompt se genera sin el bloque de catálogo.
+    const categories = await this.connectorRegistry.getCategoriesForContext(tenantId);
     messages.push({
       role: 'system',
-      content: buildSystemPrompt(tenantPrompt, tenantName, enabledTools),
+      content: buildSystemPrompt(tenantPrompt, tenantName, toolInfo, categories),
     });
     // Los mensajes de la ventana (que pueden incluir un system de contexto previo).
     for (const msg of windowed.messages) {
@@ -639,6 +693,27 @@ export class ChatService {
               // sintética determinista. Así garantizamos que siempre se verifica
               // la existencia del producto antes de preguntar detalles.
               if (intent.isProductSearch && !searchAttempted && tenant.enabledTools.includes('buscar_productos')) {
+                // Detectar si el usuario mencionó una categoría conocida.
+                // Si es así, la búsqueda sintética se hace por categoría en vez de query.
+                const knownCategories = await this.connectorRegistry.getCategoriesForContext(tenant.id);
+                const detectedCategory = this.detectCategoryMention(messages, knownCategories);
+
+                if (detectedCategory) {
+                  this.logger.warn(
+                    `pedir_aclaracion bloqueado por guard de existencia — forzando búsqueda sintética ` +
+                      `con categoria="${detectedCategory}". Pregunta del modelo que se descarta: "${parsed.pregunta}"`,
+                  );
+                  await this.injectSyntheticSearch(
+                    tenant.id,
+                    '', // sin query — buscar solo por categoría
+                    messages,
+                    lastFoundProductsContainer,
+                    detectedCategory,
+                  );
+                  searchAttempted = true;
+                  continue;
+                }
+
                 const synthQuery = this.extractSearchQuery(messages);
                 if (synthQuery) {
                   this.logger.warn(

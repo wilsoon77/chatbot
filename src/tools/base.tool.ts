@@ -12,6 +12,13 @@ export abstract class BaseTool {
   /** Esquema de validación Zod para los argumentos de la tool (opcional) */
   readonly inputSchema?: ZodSchema;
 
+  /**
+   * Descripción corta (1 línea) de la capacidad de la tool, legible para el
+   * system prompt. Se usa en `buildToolsPolicyBlock` para generar instrucciones
+   * dinámicas. Si se omite, se deriva de `getDefinition().description`.
+   */
+  readonly promptDescription?: string;
+
   /** Definición de la tool para enviar al LLM */
   abstract getDefinition(): ToolDefinition;
 

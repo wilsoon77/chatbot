@@ -1,3 +1,6 @@
+import type { ToolInfo } from '../../tools/tools.registry.js';
+import type { CategoryDto } from '../../commerce/commerce.interfaces.js';
+
 /**
  * system-prompt.template.ts
  *
@@ -18,24 +21,19 @@
  * la descripción de cada herramienta (y ausentes del prompt del tenant), lo que
  * provocaba llamadas a herramientas indebidas y mala comprensión. Al centralizar
  * aquí, el comportamiento es consistente y queda versionado en git.
+ *
+ * Desde la refactorización a prompt dinámico, el bloque de política se genera
+ * desde `ToolInfo[]` (información real de las tools habilitadas del tenant),
+ * eliminando la constante hardcodeada `WOO_TOOL_NAMES`. Esto permite que
+ * cualquier tool nueva (Odoo, etc.) se refleje automáticamente en el prompt.
  */
-
-/**
- * Acciones del catálogo de WooCommerce que el asistente conoce. Se exponen al
- * prompt para que el modelo sepa qué puede hacer, sin exponer nombres internos
- * de herramientas salvo lo estrictamente necesario para la guía de uso.
- */
-const WOO_TOOL_NAMES = {
-  buscar: 'buscar_productos',
-  stock: 'ver_stock',
-  pedido: 'ver_estado_pedido',
-  categorias: 'obtener_categorias',
-  carrito: 'agregar_al_carrito',
-  aclaracion: 'pedir_aclaracion',
-} as const;
 
 /**
  * Bloque de reglas de uso de herramientas.
+ *
+ * Se genera dinámicamente desde `ToolInfo[]` (información real de las tools
+ * habilitadas del tenant), en vez de una constante hardcodeada. Esto permite
+ * que cualquier tool nueva se refleje automáticamente en el prompt.
  *
  * Está escrito en segunda persona como instrucciones directas al modelo, en
  * español neutro, con ejemplos concretos. Es deliberadamente explícito y algo
@@ -45,14 +43,15 @@ const WOO_TOOL_NAMES = {
  */
 function buildToolsPolicyBlock(
   tenantName: string,
-  enabledToolNames: string[],
+  toolInfo: ToolInfo[],
 ): string {
-  const has = (n: string) => enabledToolNames.includes(n);
-  const canSearch = has(WOO_TOOL_NAMES.buscar);
-  const canStock = has(WOO_TOOL_NAMES.stock);
-  const canOrder = has(WOO_TOOL_NAMES.pedido);
-  const canCategories = has(WOO_TOOL_NAMES.categorias);
-  const canCart = has(WOO_TOOL_NAMES.carrito);
+  // Helpers para detectar capabilities por nombre de tool.
+  const has = (n: string) => toolInfo.some((t) => t.name === n);
+  const canSearch = has('buscar_productos');
+  const canStock = has('ver_stock');
+  const canCategories = has('obtener_categorias');
+  const canCart = has('agregar_al_carrito');
+  const hasActionTools = toolInfo.length > 0;
 
   const lines: string[] = [];
 
@@ -117,15 +116,17 @@ function buildToolsPolicyBlock(
       '   - El usuario pregunta por el STOCK o disponibilidad de un producto concreto.',
     );
   }
-  if (canOrder) {
-    lines.push(
-      '   - El usuario pregunta por el ESTADO DE UN PEDIDO, aportando número de pedido Y correo.',
-    );
-  }
   if (canCart) {
     lines.push(
       '   - El usuario pide AGREGAR al carrito un producto (resolviendo el ID como se indica abajo).',
     );
+  }
+  // Listado dinámico de capacidades disponibles para este tenant.
+  if (hasActionTools) {
+    lines.push('   - Herramientas disponibles para este asistente:');
+    for (const t of toolInfo) {
+      lines.push(`     • ${t.promptDescription}`);
+    }
   }
   lines.push(
     '   - Si dudas entre responder directo o usar una herramienta, responde directo y, si el usuario',
@@ -229,18 +230,17 @@ function buildToolsPolicyBlock(
     '4) PEDIR ACLARACIÓN: úsalo SOLO cuando el usuario quiere una acción concreta',
   );
   lines.push(
-    '   (buscar, ver stock, consultar pedido, agregar al carrito) PERO falta un dato obligatorio',
+    '   (buscar, ver stock, agregar al carrito) PERO falta un dato obligatorio',
   );
   lines.push(
-    '   que NO está en el contexto (y que no puedes resolver como en el punto 3). Ejemplo válido:',
+    '   que NO está en el contexto (y que no puedes resolver como en el punto 3).',
   );
   lines.push(
-    '   "quiero ver mi pedido" → falta el número de pedido y el correo. NUNCA pidas aclaración para',
+    '   NUNCA pidas aclaración para saludos, opiniones, ni datos que ya tienes en el contexto.',
   );
   lines.push(
-    '   saludos, opiniones, ni datos que ya tienes en el contexto. Tampoco después de agregar un',
+    '   Tampoco después de agregar un producto al carrito con éxito.',
   );
-  lines.push('   producto al carrito con éxito.');
   lines.push('');
 
   // ── Formato de parámetros ───────────────────────────────────────────────
@@ -249,7 +249,16 @@ function buildToolsPolicyBlock(
       '5) FORMATO DE BÚSQUEDA: usa el parámetro de búsqueda en SINGULAR y forma base',
     );
     lines.push(
-      '   ("teclado" no "teclados"; "flor" no "flores"). Omite la categoría salvo que tengas su ID numérico real.',
+      '   ("teclado" no "teclados"; "flor" no "flores").',
+    );
+    lines.push(
+      '   Si el usuario nombra una categoría que conoces (del catálogo pre-cargado o de obtener_categorias),',
+    );
+    lines.push(
+      '   pasa ese nombre o su ID en "categoria" y deja "query" vacío. El parámetro "categoria" acepta',
+    );
+    lines.push(
+      '   tanto el nombre legible (ej: "Monitores") como el ID numérico (ej: "17").',
     );
     lines.push('');
   }
@@ -285,20 +294,61 @@ function buildToolsPolicyBlock(
 }
 
 /**
+ * Construye el bloque de catálogo de la tienda con las categorías disponibles.
+ * Se inyecta en el system prompt para que el LLM conozca las categorías ANTES
+ * de cualquier tool call, permitiendo responder "¿qué venden?" directamente y
+ * pasar nombres de categoría en buscar_productos sin un round-trip previo.
+ *
+ * Si no hay categorías (la tienda no las devolvió o falló), devuelve string
+ * vacío (graceful degradation).
+ */
+function buildCatalogBlock(categories: CategoryDto[] | null): string {
+  if (!categories || categories.length === 0) return '';
+
+  const lines: string[] = [];
+  lines.push('');
+  lines.push('════════════════════════════════════════════════════════');
+  lines.push('CATÁLOGO DE LA TIENDA (contexto pre-cargado)');
+  lines.push('════════════════════════════════════════════════════════');
+  lines.push('');
+  lines.push('Las siguientes categorías están disponibles en la tienda:');
+  for (const c of categories) {
+    lines.push(`  • ${c.nombre} (ID: ${c.id}) — ${c.cantidad} productos`);
+  }
+  lines.push('');
+  lines.push(
+    'Puedes mencionar estas categorías cuando el usuario pregunte "¿qué venden?" o "¿qué tienen?".',
+  );
+  lines.push(
+    'Si el usuario quiere ver los productos de una categoría, pasa el nombre o el ID en el',
+  );
+  lines.push(
+    'parámetro "categoria" de buscar_productos (el sistema lo resuelve automáticamente).',
+  );
+  lines.push('');
+  lines.push('════════════════════════════════════════════════════════');
+
+  return lines.join('\n');
+}
+
+/**
  * Construye el system prompt completo para un turno.
  *
- * @param tenantPrompt      Prompt del tenant desde la BD (persona/tono/catálogo).
- * @param tenantName        Nombre legible de la tienda.
- * @param enabledToolNames  Nombres de herramientas habilitadas para el tenant.
+ * @param tenantPrompt  Prompt del tenant desde la BD (persona/tono/catálogo).
+ * @param tenantName    Nombre legible de la tienda.
+ * @param toolInfo      Información de las tools habilitadas (dinámica).
+ * @param categories    Categorías disponibles para inyectar como contexto
+ *                      (opcional — si es null, se omite el bloque de catálogo).
  * @returns El system prompt final a inyectar como mensaje `system`.
  */
 export function buildSystemPrompt(
   tenantPrompt: string | null | undefined,
   tenantName: string,
-  enabledToolNames: string[],
+  toolInfo: ToolInfo[],
+  categories?: CategoryDto[] | null,
 ): string {
   const persona = (tenantPrompt ?? '').trim() || fallbackPersona(tenantName);
-  return `${persona}${buildToolsPolicyBlock(tenantName, enabledToolNames)}`;
+  return `${persona}${buildCatalogBlock(categories ?? null)}${buildToolsPolicyBlock(tenantName, toolInfo)}`;
 }
 
 /**
@@ -308,7 +358,7 @@ export function buildSystemPrompt(
 function fallbackPersona(tenantName: string): string {
   return (
     `Eres el asistente virtual de ${tenantName}, una tienda en línea. ` +
-    'Ayudas a los clientes a encontrar productos, consultar stock y estado de pedidos, ' +
+    'Ayudas a los clientes a encontrar productos, consultar stock ' +
     'y agregar productos al carrito. Respondes de forma clara, profesional y amigable en español.'
   );
 }

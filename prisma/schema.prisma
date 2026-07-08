@@ -1,30 +1,43 @@
 generator client {
-  provider = "prisma-client-js"
-  previewFeatures = ["driverAdapters"]  // <- agregar esto
-
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
   provider = "postgresql"
- 
-
 }
 
 model Tenant {
-  id                String   @id @default(cuid())
-  nombre            String
-  systemPrompt      String  //ERES UN EXPERTO EN TECnologua
-  woocommerceUrl    String
-  consumerKey       String
-  consumerSecret    String
-  enabledTools      String[]
-  redisTTL          Int      @default(3600)
-  isActive          Boolean  @default(true) 
+  id           String   @id @default(cuid())
+  nombre       String
+  systemPrompt String   @db.Text
+  redisTTL     Int      @default(3600)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  // Relaciones
+  connectors ConnectorConfig[]
 }
 
+model ConnectorConfig {
+  id               String        @id @default(cuid())
+  tenantId         String
+  type             ConnectorType
+  // Credenciales cifradas en JSON: { url, consumerKey, consumerSecret, ... }
+  credentialsJson  String        @db.Text
+  // Tools habilitadas para este conector en JSON (ej: '["buscar_productos"]')
+  enabledToolsJson String        @db.Text @default("[]")
+  isDefault        Boolean       @default(false)
+  isActive         Boolean       @default(true)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, isDefault])
+}
 
 model User {
   id        String   @id @default(cuid())
@@ -39,4 +52,9 @@ model User {
 enum Role {
   ADMIN
   CLIENT
+}
+
+enum ConnectorType {
+  WOOCOMMERCE
+  ODOO
 }
