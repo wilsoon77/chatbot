@@ -57,4 +57,5 @@ enum Role {
 enum ConnectorType {
   WOOCOMMERCE
   ODOO
+  DIRECT_DATABASE
 }

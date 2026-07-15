@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Tenant } from '../service/tenantsService';
+import { CONNECTOR_LABELS } from '../service/tenantsService';
 import { tenantsService } from '../service/tenantsService';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import './TenantCard.css';
@@ -224,8 +225,12 @@ export function TenantCard({ tenant, onEdit, onDeleted }: TenantCardProps) {
         {/* BODY */}
         <div className="tenant-card__body">
           <div className="tenant-card__row">
-            <span className="tenant-card__label">URL WooCommerce</span>
-            <span className="tenant-card__value">{tenant.woocommerceUrl || '—'}</span>
+            <span className="tenant-card__label">Conector</span>
+            <span className="tenant-card__value">
+              {tenant.connectorType
+                ? CONNECTOR_LABELS[tenant.connectorType] || tenant.connectorType
+                : '—'}
+            </span>
           </div>
           <div className="tenant-card__row">
             <span className="tenant-card__label">TTL Redis</span>

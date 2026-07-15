@@ -1,28 +1,83 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
 import { CryptoService } from '../common/crypto/crypto.service';
 import { ConnectorRegistry } from '../commerce/connector.registry';
+import { ConnectorType } from './dto/connector-credentials.dto.js';
+
+/**
+ * Campos requeridos por tipo de conector.
+ * Se usa para validar que las credenciales enviadas tengan todos los campos obligatorios.
+ */
+const REQUIRED_FIELDS: Record<ConnectorType, string[]> = {
+  [ConnectorType.WOOCOMMERCE]: ['url', 'consumerKey', 'consumerSecret'],
+  [ConnectorType.DIRECT_DATABASE]: ['driver', 'host', 'port', 'database', 'user', 'password'],
+  [ConnectorType.ODOO]: ['url', 'database', 'username', 'password'],
+};
+
+/**
+ * Campos sensibles que se enmascaran al devolver credenciales al frontend.
+ */
+const SENSITIVE_FIELDS = new Set([
+  'password', 'consumerSecret', 'consumerKey', 'secret', 'token',
+]);
 
 @Injectable()
 export class TenantsService {
+  private readonly logger = new Logger(TenantsService.name);
+
   constructor(
     private prisma: PrismaService,
     private cryptoService: CryptoService,
     private connectorRegistry: ConnectorRegistry,
   ) {}
 
-  private sanitizeTenant<T>(tenant: T | null) {
-    if (!tenant) return null;
-    const { ...safeTenant } = tenant as any;
-    delete safeTenant.consumerKey;
-    delete safeTenant.consumerSecret;
-    return safeTenant;
+  // ─── Validación de credenciales ─────────────────────────────────────────
+
+  /**
+   * Valida que las credenciales tengan todos los campos requeridos según el tipo de conector.
+   */
+  private validateCredentials(type: ConnectorType, credentials: Record<string, any>): void {
+    const required = REQUIRED_FIELDS[type] || [];
+    const missing = required.filter((field) => !credentials[field]);
+
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Faltan campos obligatorios para el conector "${type}": ${missing.join(', ')}`,
+      );
+    }
+
+    // Validación específica para DIRECT_DATABASE
+    if (type === ConnectorType.DIRECT_DATABASE) {
+      const driver = credentials.driver;
+      if (!['postgresql', 'mysql'].includes(driver)) {
+        throw new BadRequestException(
+          `Driver no soportado: "${driver}". Valores válidos: postgresql, mysql`,
+        );
+      }
+    }
   }
 
+  /**
+   * Enmascara los campos sensibles de las credenciales para enviar al frontend.
+   * Devuelve una copia con los campos sensibles reemplazados por "••••••••".
+   */
+  private maskCredentials(credentials: Record<string, any>): Record<string, any> {
+    const masked: Record<string, any> = {};
+    for (const [key, value] of Object.entries(credentials)) {
+      masked[key] = SENSITIVE_FIELDS.has(key) ? '••••••••' : value;
+    }
+    return masked;
+  }
+
+  // ─── CRUD ──────────────────────────────────────────────────────────────
+
   async create(data: CreateTenantDto) {
-    // 1. Crear el Tenant
+    // 1. Validar credenciales según el tipo de conector
+    this.validateCredentials(data.connectorType, data.connectorCredentials);
+
+    // 2. Crear el Tenant
     const tenant = await this.prisma.tenant.create({
       data: {
         nombre: data.nombre,
@@ -31,19 +86,16 @@ export class TenantsService {
       },
     });
 
-    // 2. Cifrar las credenciales de WooCommerce
-    const credsObj = {
-      url: data.woocommerceUrl,
-      consumerKey: data.consumerKey,
-      consumerSecret: data.consumerSecret,
-    };
-    const encryptedCredentials = this.cryptoService.encrypt(JSON.stringify(credsObj));
+    // 3. Cifrar las credenciales
+    const encryptedCredentials = this.cryptoService.encrypt(
+      JSON.stringify(data.connectorCredentials),
+    );
 
-    // 3. Crear ConnectorConfig relacionado
+    // 4. Crear ConnectorConfig relacionado
     await this.prisma.connectorConfig.create({
       data: {
         tenantId: tenant.id,
-        type: 'WOOCOMMERCE',
+        type: data.connectorType,
         credentialsJson: encryptedCredentials,
         enabledToolsJson: JSON.stringify(data.enabledTools || []),
         isDefault: true,
@@ -51,11 +103,14 @@ export class TenantsService {
       },
     });
 
+    this.logger.log(
+      `Tenant "${tenant.nombre}" creado con conector "${data.connectorType}"`,
+    );
+
     return {
       ...tenant,
-      woocommerceUrl: data.woocommerceUrl,
-      consumerKey: '••••••••',
-      consumerSecret: '••••••••',
+      connectorType: data.connectorType,
+      connectorCredentials: this.maskCredentials(data.connectorCredentials),
       enabledTools: data.enabledTools,
     };
   }
@@ -69,13 +124,15 @@ export class TenantsService {
         where: { tenantId: tenant.id, isDefault: true },
       });
 
-      let woocommerceUrl = '';
+      let connectorType: string | null = null;
+      let connectorCredentials: Record<string, any> = {};
       let enabledTools: string[] = [];
 
       if (config) {
+        connectorType = config.type;
         try {
           const creds = JSON.parse(this.cryptoService.decrypt(config.credentialsJson));
-          woocommerceUrl = creds.url || '';
+          connectorCredentials = this.maskCredentials(creds);
         } catch {}
         try {
           enabledTools = JSON.parse(config.enabledToolsJson);
@@ -84,9 +141,8 @@ export class TenantsService {
 
       result.push({
         ...tenant,
-        woocommerceUrl,
-        consumerKey: '••••••••',
-        consumerSecret: '••••••••',
+        connectorType,
+        connectorCredentials,
         enabledTools,
       });
     }
@@ -105,17 +161,15 @@ export class TenantsService {
       where: { tenantId: id, isDefault: true },
     });
 
-    let woocommerceUrl = '';
-    let consumerKey = '';
-    let consumerSecret = '';
+    let connectorType: string | null = null;
+    let connectorCredentials: Record<string, any> = {};
     let enabledTools: string[] = [];
 
     if (config) {
+      connectorType = config.type;
       try {
         const creds = JSON.parse(this.cryptoService.decrypt(config.credentialsJson));
-        woocommerceUrl = creds.url || '';
-        consumerKey = creds.consumerKey || '';
-        consumerSecret = creds.consumerSecret || '';
+        connectorCredentials = this.maskCredentials(creds);
       } catch {}
       try {
         enabledTools = JSON.parse(config.enabledToolsJson);
@@ -124,9 +178,8 @@ export class TenantsService {
 
     return {
       ...tenant,
-      woocommerceUrl,
-      consumerKey,
-      consumerSecret,
+      connectorType,
+      connectorCredentials,
       enabledTools,
     };
   }
@@ -151,22 +204,33 @@ export class TenantsService {
       where: { tenantId: id, isDefault: true },
     });
 
-    let credsObj: any = {};
+    // 3. Determinar el tipo de conector (nuevo o existente)
+    const connectorType = data.connectorType ?? (config?.type as ConnectorType) ?? ConnectorType.WOOCOMMERCE;
+
+    // 4. Manejar credenciales
+    let credsObj: Record<string, any> = {};
     if (config) {
-      credsObj = JSON.parse(this.cryptoService.decrypt(config.credentialsJson));
+      try {
+        credsObj = JSON.parse(this.cryptoService.decrypt(config.credentialsJson));
+      } catch {}
     }
 
-    if (data.woocommerceUrl !== undefined) credsObj.url = data.woocommerceUrl;
-    if (data.consumerKey !== undefined) credsObj.consumerKey = data.consumerKey;
-    if (data.consumerSecret !== undefined) credsObj.consumerSecret = data.consumerSecret;
+    // Si se envían credenciales nuevas, validarlas y reemplazar
+    if (data.connectorCredentials) {
+      this.validateCredentials(connectorType, data.connectorCredentials);
+      credsObj = data.connectorCredentials;
+    }
 
     const encryptedCredentials = this.cryptoService.encrypt(JSON.stringify(credsObj));
-    const enabledToolsJson = data.enabledTools ? JSON.stringify(data.enabledTools) : (config ? config.enabledToolsJson : '[]');
+    const enabledToolsJson = data.enabledTools
+      ? JSON.stringify(data.enabledTools)
+      : (config ? config.enabledToolsJson : '[]');
 
     if (config) {
       await this.prisma.connectorConfig.update({
         where: { id: config.id },
         data: {
+          type: connectorType,
           credentialsJson: encryptedCredentials,
           enabledToolsJson,
         },
@@ -175,7 +239,7 @@ export class TenantsService {
       await this.prisma.connectorConfig.create({
         data: {
           tenantId: id,
-          type: 'WOOCOMMERCE',
+          type: connectorType,
           credentialsJson: encryptedCredentials,
           enabledToolsJson,
           isDefault: true,
@@ -184,15 +248,18 @@ export class TenantsService {
       });
     }
 
-    // Invalidar la caché de conectores en caliente para que se carguen las nuevas credenciales/herramientas inmediatamente
+    // Invalidar la caché de conectores en caliente
     this.connectorRegistry.invalidate(id);
+
+    this.logger.log(`Tenant "${updated.nombre}" actualizado (conector: ${connectorType})`);
 
     return {
       ...updated,
-      woocommerceUrl: credsObj.url,
-      consumerKey: '••••••••',
-      consumerSecret: '••••••••',
-      enabledTools: data.enabledTools ? data.enabledTools : (config ? JSON.parse(config.enabledToolsJson) : []),
+      connectorType,
+      connectorCredentials: this.maskCredentials(credsObj),
+      enabledTools: data.enabledTools
+        ? data.enabledTools
+        : (config ? JSON.parse(config.enabledToolsJson) : []),
     };
   }
 
@@ -249,12 +316,19 @@ export class TenantsService {
 
     const creds = JSON.parse(this.cryptoService.decrypt(config.credentialsJson));
 
-    // Retornamos aplanado para compatibilidad
+    // Retornamos el tipo de conector y las credenciales descifradas.
+    // Para compatibilidad hacia atrás, también aplanamos campos de WooCommerce
+    // si el conector es de ese tipo (chat.service usa tenant.woocommerceUrl).
+    const isWoo = config.type === 'WOOCOMMERCE';
+
     return {
       ...tenant,
-      woocommerceUrl: creds.url,
-      consumerKey: creds.consumerKey,
-      consumerSecret: creds.consumerSecret,
+      connectorType: config.type,
+      connectorCredentials: creds,
+      // Compatibilidad hacia atrás (WooCommerce)
+      woocommerceUrl: isWoo ? creds.url : undefined,
+      consumerKey: isWoo ? creds.consumerKey : undefined,
+      consumerSecret: isWoo ? creds.consumerSecret : undefined,
       enabledTools: JSON.parse(config.enabledToolsJson),
     };
   }

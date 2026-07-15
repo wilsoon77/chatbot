@@ -3,6 +3,8 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { CryptoService } from '../common/crypto/crypto.service.js';
 import { ICommerceConnector, CategoryDto } from './commerce.interfaces.js';
 import { WooCommerceConnector } from './connectors/woocommerce.connector.js';
+import { DatabaseConnector } from './connectors/database.connector.js';
+import { OdooConnector } from './connectors/odoo.connector.js';
 
 /** TTL del caché de categorías en milisegundos (1 hora por defecto). */
 const CATEGORY_CACHE_TTL_MS = Number(process.env.CATEGORY_CACHE_TTL_MS) || 60 * 60 * 1000;
@@ -117,6 +119,10 @@ export class ConnectorRegistry {
     switch (type) {
       case 'WOOCOMMERCE':
         return new WooCommerceConnector(credentials);
+      case 'DIRECT_DATABASE':
+        return new DatabaseConnector(credentials);
+      case 'ODOO':
+        return new OdooConnector(credentials);
       default:
         throw new Error(`Tipo de conector no soportado: "${type}"`);
     }

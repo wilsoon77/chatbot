@@ -1,5 +1,8 @@
 import { useState } from 'react';
 import { tenantsService } from '../service/tenantsService';
+import type { ConnectorType } from '../service/tenantsService';
+import { CONNECTOR_LABELS } from '../service/tenantsService';
+import { ConnectorFields, getDefaultCredentials, validateConnectorCredentials } from '../components/ConnectorFields';
 import type { Page } from '../../../types/navigation';
 import './NewTenantPage.css';
 import logo from '../../../assets/images/chatgo.png';
@@ -12,6 +15,8 @@ const AVAILABLE_TOOLS = [
   { id: 'agregar_al_carrito',  label: 'Agregar al carrito' },
 ];
 
+const CONNECTOR_TYPES = Object.entries(CONNECTOR_LABELS) as [ConnectorType, string][];
+
 interface NewTenantPageProps {
   onLogout: () => void;
   onNavigate: (page: Page) => void;
@@ -20,19 +25,19 @@ interface NewTenantPageProps {
 interface FormErrors {
   nombre?: string;
   systemPrompt?: string;
-  woocommerceUrl?: string;
-  consumerKey?: string;
-  consumerSecret?: string;
+  connectorType?: string;
   enabledTools?: string;
+  [key: string]: string | undefined;
 }
 
 export function NewTenantPage({ onLogout, onNavigate }: NewTenantPageProps) {
+  const [connectorType, setConnectorType] = useState<ConnectorType>('WOOCOMMERCE');
+  const [connectorCredentials, setConnectorCredentials] = useState<Record<string, any>>(
+    getDefaultCredentials('WOOCOMMERCE'),
+  );
   const [form, setForm] = useState({
     nombre: '',
     systemPrompt: '',
-    woocommerceUrl: '',
-    consumerKey: '',
-    consumerSecret: '',
     enabledTools: [] as string[],
     redisTTL: 3600,
   });
@@ -40,16 +45,37 @@ export function NewTenantPage({ onLogout, onNavigate }: NewTenantPageProps) {
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
+  const handleConnectorTypeChange = (type: ConnectorType) => {
+    setConnectorType(type);
+    setConnectorCredentials(getDefaultCredentials(type));
+    // Limpiar errores de credenciales del tipo anterior
+    setErrors((prev) => {
+      const cleaned = { ...prev };
+      Object.keys(cleaned).forEach((key) => {
+        if (key.includes('.')) delete cleaned[key];
+      });
+      return cleaned;
+    });
+  };
+
+  const handleCredentialChange = (key: string, value: string) => {
+    setConnectorCredentials((prev) => ({ ...prev, [key]: value }));
+    const errorKey = `${connectorType}.${key}`;
+    if (errors[errorKey]) setErrors((prev) => ({ ...prev, [errorKey]: undefined }));
+  };
+
   const validate = (): boolean => {
     const e: FormErrors = {};
     if (!form.nombre.trim())           e.nombre        = 'El nombre es obligatorio.';
     if (!form.systemPrompt.trim())     e.systemPrompt  = 'El system prompt es obligatorio.';
     else if (form.systemPrompt.length > 10000)
                                        e.systemPrompt  = `Máximo 10 000 caracteres (ahora: ${form.systemPrompt.length}).`;
-    if (!form.woocommerceUrl.trim())   e.woocommerceUrl = 'La URL de WooCommerce es obligatoria.';
-    if (!form.consumerKey.trim())      e.consumerKey   = 'El Consumer Key es obligatorio.';
-    if (!form.consumerSecret.trim())   e.consumerSecret = 'El Consumer Secret es obligatorio.';
     if (form.enabledTools.length === 0) e.enabledTools  = 'Selecciona al menos una herramienta.';
+
+    // Validar credenciales según el tipo de conector
+    const credErrors = validateConnectorCredentials(connectorType, connectorCredentials);
+    Object.assign(e, credErrors);
+
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -76,7 +102,14 @@ export function NewTenantPage({ onLogout, onNavigate }: NewTenantPageProps) {
     setLoading(true);
     setApiError(null);
     try {
-      await tenantsService.create(form);
+      await tenantsService.create({
+        nombre: form.nombre,
+        systemPrompt: form.systemPrompt,
+        connectorType,
+        connectorCredentials,
+        enabledTools: form.enabledTools,
+        redisTTL: Number(form.redisTTL),
+      });
       onNavigate('tenants');
     } catch (err: any) {
       setApiError(err.message || 'Error al crear el bot.');
@@ -115,7 +148,7 @@ export function NewTenantPage({ onLogout, onNavigate }: NewTenantPageProps) {
         <div className="dashboard__content">
           <form className="new-tenant__form" onSubmit={handleSubmit} noValidate>
             <h1 className="new-tenant__title">Crear nuevo Bot</h1>
-            <p className="new-tenant__subtitle">Configura tu asistente virtual para WooCommerce.</p>
+            <p className="new-tenant__subtitle">Configura tu asistente virtual para tu tienda.</p>
 
             {/* Nombre */}
             <div className={`nt-field ${errors.nombre ? 'nt-field--error' : ''}`}>
@@ -148,43 +181,40 @@ export function NewTenantPage({ onLogout, onNavigate }: NewTenantPageProps) {
               {errors.systemPrompt && <p className="nt-error">{errors.systemPrompt}</p>}
             </div>
 
-            {/* WooCommerce URL */}
-            <div className={`nt-field ${errors.woocommerceUrl ? 'nt-field--error' : ''}`}>
-              <label className="nt-label">URL de WooCommerce <span className="nt-required">*</span></label>
-              <input
-                className="nt-input"
-                type="url"
-                placeholder="https://mitienda.com"
-                value={form.woocommerceUrl}
-                onChange={(e) => handleChange('woocommerceUrl', e.target.value)}
-              />
-              {errors.woocommerceUrl && <p className="nt-error">{errors.woocommerceUrl}</p>}
+            {/* Selector de tipo de conector */}
+            <div className={`nt-field ${errors.connectorType ? 'nt-field--error' : ''}`}>
+              <label className="nt-label">Tipo de conector <span className="nt-required">*</span></label>
+              <p className="nt-hint">Selecciona la plataforma de e-commerce o BD de tu tienda.</p>
+              <div className="nt-connector-types">
+                {CONNECTOR_TYPES.map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`nt-connector-type ${connectorType === value ? 'nt-connector-type--active' : ''}`}
+                    onClick={() => handleConnectorTypeChange(value)}
+                  >
+                    <span className="nt-connector-type__icon">
+                      {value === 'WOOCOMMERCE' ? '🛒' : value === 'DIRECT_DATABASE' ? '🗄️' : '🏢'}
+                    </span>
+                    <span className="nt-connector-type__label">{label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Keys en fila */}
-            <div className="nt-row">
-              <div className={`nt-field ${errors.consumerKey ? 'nt-field--error' : ''}`}>
-                <label className="nt-label">Consumer Key <span className="nt-required">*</span></label>
-                <input
-                  className="nt-input nt-input--mono"
-                  type="text"
-                  placeholder="ck_..."
-                  value={form.consumerKey}
-                  onChange={(e) => handleChange('consumerKey', e.target.value)}
-                />
-                {errors.consumerKey && <p className="nt-error">{errors.consumerKey}</p>}
+            {/* Credenciales dinámicas según el tipo de conector */}
+            <div className="nt-keys-section">
+              <div className="nt-keys-header">
+                <span className="nt-keys-title">
+                  🔑 Credenciales — {CONNECTOR_LABELS[connectorType]}
+                </span>
               </div>
-              <div className={`nt-field ${errors.consumerSecret ? 'nt-field--error' : ''}`}>
-                <label className="nt-label">Consumer Secret <span className="nt-required">*</span></label>
-                <input
-                  className="nt-input nt-input--mono"
-                  type="password"
-                  placeholder="cs_..."
-                  value={form.consumerSecret}
-                  onChange={(e) => handleChange('consumerSecret', e.target.value)}
-                />
-                {errors.consumerSecret && <p className="nt-error">{errors.consumerSecret}</p>}
-              </div>
+              <ConnectorFields
+                type={connectorType}
+                credentials={connectorCredentials}
+                errors={errors}
+                onChange={handleCredentialChange}
+              />
             </div>
 
             {/* Herramientas */}

@@ -1,4 +1,13 @@
-import { IsString, IsArray, IsInt, IsOptional, IsBoolean, } from 'class-validator';
+import {
+  IsString,
+  IsArray,
+  IsInt,
+  IsOptional,
+  IsBoolean,
+  IsEnum,
+  IsObject,
+} from 'class-validator';
+import { ConnectorType } from './connector-credentials.dto.js';
 
 export class UpdateTenantDto {
   @IsString()
@@ -9,28 +18,30 @@ export class UpdateTenantDto {
   @IsOptional()
   systemPrompt?: string;
 
-  @IsString()
+  @IsInt()
   @IsOptional()
-  woocommerceUrl?: string;
+  redisTTL?: number;
 
-  @IsString()
+  @IsBoolean()
   @IsOptional()
-  consumerKey?: string;
+  isActive?: boolean;
 
-  @IsString()
+  // ─── Conector ──────────────────────────────────────────────────────────
+
+  @IsEnum(ConnectorType)
   @IsOptional()
-  consumerSecret?: string;
+  connectorType?: ConnectorType;
+
+  /**
+   * Credenciales del conector. Si se envían, reemplazan las existentes.
+   * La estructura depende de `connectorType`.
+   */
+  @IsObject()
+  @IsOptional()
+  connectorCredentials?: Record<string, any>;
 
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
   enabledTools?: string[];
-
-  @IsInt()
-  @IsOptional()
-  redisTTL?: number;
-
-  @IsBoolean()          // 👈 NUEVO
-  @IsOptional()
-  isActive?: boolean;
 }

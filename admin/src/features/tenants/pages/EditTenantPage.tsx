@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { tenantsService } from '../service/tenantsService';
-import type { Tenant } from '../service/tenantsService';
+import type { Tenant, ConnectorType } from '../service/tenantsService';
+import { CONNECTOR_LABELS } from '../service/tenantsService';
+import { ConnectorFields, getDefaultCredentials, validateConnectorCredentials } from '../components/ConnectorFields';
 import type { Page } from '../../../types/navigation';
 import './EditTenantPage.css';
 
@@ -12,6 +14,8 @@ const AVAILABLE_TOOLS = [
   { id: 'agregar_al_carrito',  label: 'Agregar al carrito' },
 ];
 
+const CONNECTOR_TYPES = Object.entries(CONNECTOR_LABELS) as [ConnectorType, string][];
+
 interface EditTenantPageProps {
   tenant: Tenant;
   onLogout: () => void;
@@ -21,17 +25,23 @@ interface EditTenantPageProps {
 interface FormErrors {
   nombre?: string;
   systemPrompt?: string;
-  woocommerceUrl?: string;
+  connectorType?: string;
   enabledTools?: string;
+  [key: string]: string | undefined;
 }
 
 export function EditTenantPage({ tenant, onLogout, onNavigate }: EditTenantPageProps) {
+  const initialConnectorType = (tenant.connectorType || 'WOOCOMMERCE') as ConnectorType;
+  // Las credenciales que vienen del backend tienen los campos sensibles enmascarados ("••••••••").
+  // Las usamos como base para mostrar valores no sensibles, pero los campos de password se envían
+  // solo si el usuario escribe algo nuevo.
+  const initialCredentials = tenant.connectorCredentials || getDefaultCredentials(initialConnectorType);
+
+  const [connectorType, setConnectorType] = useState<ConnectorType>(initialConnectorType);
+  const [connectorCredentials, setConnectorCredentials] = useState<Record<string, any>>(initialCredentials);
   const [form, setForm] = useState({
     nombre:         tenant.nombre,
     systemPrompt:   tenant.systemPrompt,
-    woocommerceUrl: tenant.woocommerceUrl,
-    consumerKey:    '',   // vacío — solo se envía si el usuario escribe algo
-    consumerSecret: '',   // vacío — solo se envía si el usuario escribe algo
     enabledTools:   tenant.enabledTools ?? [],
     redisTTL:       tenant.redisTTL,
   });
@@ -39,14 +49,37 @@ export function EditTenantPage({ tenant, onLogout, onNavigate }: EditTenantPageP
   const [loading,  setLoading]  = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
+  const handleConnectorTypeChange = (type: ConnectorType) => {
+    setConnectorType(type);
+    // Al cambiar de tipo, resetear credenciales a los valores por defecto del nuevo tipo
+    setConnectorCredentials(getDefaultCredentials(type));
+    setErrors((prev) => {
+      const cleaned = { ...prev };
+      Object.keys(cleaned).forEach((key) => {
+        if (key.includes('.')) delete cleaned[key];
+      });
+      return cleaned;
+    });
+  };
+
+  const handleCredentialChange = (key: string, value: string) => {
+    setConnectorCredentials((prev) => ({ ...prev, [key]: value }));
+    const errorKey = `${connectorType}.${key}`;
+    if (errors[errorKey]) setErrors((prev) => ({ ...prev, [errorKey]: undefined }));
+  };
+
   const validate = (): boolean => {
     const e: FormErrors = {};
     if (!form.nombre.trim())          e.nombre        = 'El nombre es obligatorio.';
     if (!form.systemPrompt.trim())    e.systemPrompt  = 'El system prompt es obligatorio.';
     else if (form.systemPrompt.length > 10000)
                                       e.systemPrompt  = `Máximo 10 000 caracteres (ahora: ${form.systemPrompt.length}).`;
-    if (!form.woocommerceUrl.trim())  e.woocommerceUrl = 'La URL de WooCommerce es obligatoria.';
     if (form.enabledTools.length === 0) e.enabledTools = 'Selecciona al menos una herramienta.';
+
+    // Validar credenciales (en modo edición, password vacío = mantener existente)
+    const credErrors = validateConnectorCredentials(connectorType, connectorCredentials, true);
+    Object.assign(e, credErrors);
+
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -73,16 +106,31 @@ export function EditTenantPage({ tenant, onLogout, onNavigate }: EditTenantPageP
     setLoading(true);
     setApiError(null);
 
-    // Solo incluye las llaves si el usuario escribió algo
+    // Construir payload: solo incluir credenciales si el tipo cambió o si el usuario
+    // modificó algún campo de password (no enmascarado)
     const payload: Record<string, unknown> = {
       nombre:         form.nombre,
       systemPrompt:   form.systemPrompt,
-      woocommerceUrl: form.woocommerceUrl,
       enabledTools:   form.enabledTools,
       redisTTL:       Number(form.redisTTL),
     };
-    if (form.consumerKey.trim())    payload.consumerKey    = form.consumerKey.trim();
-    if (form.consumerSecret.trim()) payload.consumerSecret = form.consumerSecret.trim();
+
+    // Si cambió el tipo de conector, enviar el nuevo tipo y todas las credenciales
+    if (connectorType !== initialConnectorType) {
+      payload.connectorType = connectorType;
+      payload.connectorCredentials = connectorCredentials;
+    } else {
+      // Mismo tipo: solo enviar credenciales si el usuario modificó campos de password
+      // (los que no están enmascarados con "••••••••")
+      const hasNewPassword = Object.entries(connectorCredentials).some(([key, val]) => {
+        const isPasswordField = key === 'password' || key === 'consumerSecret' || key === 'consumerKey';
+        return isPasswordField && val && val !== '••••••••' && val !== initialCredentials[key];
+      });
+
+      if (hasNewPassword) {
+        payload.connectorCredentials = connectorCredentials;
+      }
+    }
 
     try {
       await tenantsService.update(tenant.id, payload);
@@ -144,32 +192,42 @@ export function EditTenantPage({ tenant, onLogout, onNavigate }: EditTenantPageP
               {errors.systemPrompt && <p className="nt-error">{errors.systemPrompt}</p>}
             </div>
 
-            {/* URL WooCommerce */}
-            <div className={`nt-field ${errors.woocommerceUrl ? 'nt-field--error' : ''}`}>
-              <label className="nt-label">URL de WooCommerce <span className="nt-required">*</span></label>
-              <input className="nt-input" type="url" value={form.woocommerceUrl}
-                onChange={(e) => handleChange('woocommerceUrl', e.target.value)} />
-              {errors.woocommerceUrl && <p className="nt-error">{errors.woocommerceUrl}</p>}
+            {/* Selector de tipo de conector */}
+            <div className={`nt-field ${errors.connectorType ? 'nt-field--error' : ''}`}>
+              <label className="nt-label">Tipo de conector <span className="nt-required">*</span></label>
+              <p className="nt-hint">Selecciona la plataforma de e-commerce o BD de tu tienda.</p>
+              <div className="nt-connector-types">
+                {CONNECTOR_TYPES.map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`nt-connector-type ${connectorType === value ? 'nt-connector-type--active' : ''}`}
+                    onClick={() => handleConnectorTypeChange(value)}
+                  >
+                    <span className="nt-connector-type__icon">
+                      {value === 'WOOCOMMERCE' ? '🛒' : value === 'DIRECT_DATABASE' ? '🗄️' : '🏢'}
+                    </span>
+                    <span className="nt-connector-type__label">{label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Llaves — opcionales al editar */}
+            {/* Credenciales dinámicas según el tipo de conector */}
             <div className="nt-keys-section">
               <div className="nt-keys-header">
-                <span className="nt-keys-title">🔑 Credenciales WooCommerce</span>
+                <span className="nt-keys-title">
+                  🔑 Credenciales — {CONNECTOR_LABELS[connectorType]}
+                </span>
                 <span className="nt-keys-hint">Déjalas vacías para no modificarlas</span>
               </div>
-              <div className="nt-row">
-                <div className="nt-field">
-                  <label className="nt-label">Consumer Key <span className="nt-optional">(opcional)</span></label>
-                  <input className="nt-input nt-input--mono" type="password" placeholder="ck_••••••••••••"
-                    value={form.consumerKey} onChange={(e) => handleChange('consumerKey', e.target.value)} />
-                </div>
-                <div className="nt-field">
-                  <label className="nt-label">Consumer Secret <span className="nt-optional">(opcional)</span></label>
-                  <input className="nt-input nt-input--mono" type="password" placeholder="cs_••••••••••••"
-                    value={form.consumerSecret} onChange={(e) => handleChange('consumerSecret', e.target.value)} />
-                </div>
-              </div>
+              <ConnectorFields
+                type={connectorType}
+                credentials={connectorCredentials}
+                errors={errors}
+                onChange={handleCredentialChange}
+                isEdit
+              />
             </div>
 
             {/* Herramientas */}

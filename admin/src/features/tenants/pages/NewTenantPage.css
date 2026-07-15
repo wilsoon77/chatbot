@@ -349,3 +349,176 @@
     min-height: 140px;
   }
 }
+
+/* ─── Selector de tipo de conector ──────────────────────────────────────── */
+
+.nt-connector-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.nt-connector-type {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--color-card);
+  border: 2px solid var(--color-border);
+  color: var(--color-subtext);
+  transition: all 0.15s;
+  text-align: left;
+}
+
+.nt-connector-type:hover {
+  border-color: rgba(59, 130, 246, 0.4);
+  color: var(--color-text);
+}
+
+.nt-connector-type--active {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.5);
+  color: var(--color-accent);
+}
+
+.nt-connector-type__icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.nt-connector-type__label {
+  font-size: 13px;
+}
+
+/* ─── Campos dinámicos del conector ─────────────────────────────────────── */
+
+.nt-connector-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.nt-connector-fields .nt-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 600px) {
+  .nt-connector-fields .nt-row {
+    grid-template-columns: 1fr;
+  }
+
+  .nt-connector-type {
+    width: 100%;
+  }
+}
+
+/* ─── Mapeo de tablas (colapsable) ─────────────────────────────────────── */
+
+.nt-table-mapping {
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.nt-table-mapping__toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--color-card);
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  transition: background 0.15s;
+}
+
+.nt-table-mapping__toggle:hover {
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.nt-table-mapping__toggle-icon {
+  font-size: 10px;
+  color: var(--color-subtext);
+}
+
+.nt-table-mapping__toggle-text {
+  flex: 1;
+  text-align: left;
+}
+
+.nt-table-mapping__badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--color-accent);
+}
+
+.nt-table-mapping__badge--default {
+  background: rgba(100, 116, 139, 0.15);
+  color: var(--color-subtext);
+}
+
+.nt-table-mapping__content {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  border-top: 1px solid var(--color-border);
+}
+
+.nt-table-mapping__section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.nt-table-mapping__section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.nt-table-mapping__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+.nt-table-mapping__reset {
+  align-self: flex-start;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-subtext);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.nt-table-mapping__reset:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+@media (max-width: 600px) {
+  .nt-table-mapping__grid {
+    grid-template-columns: 1fr;
+  }
+}
