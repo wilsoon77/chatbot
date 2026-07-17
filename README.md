@@ -1,22 +1,38 @@
-# Chatbot Agentic multi-tenant para WooCommerce
+# 🤖 Chatbot Agentic Multi-Tenant & Multi-Conector
 
-Este proyecto es un sistema de chatbot conversacional inteligente (agente de IA) multi-tenant diseñado para integrarse con tiendas de WooCommerce. 
+Este proyecto es un sistema de chatbot conversacional inteligente (agente de IA) multi-tenant y multi-conector, diseñado para integrarse con múltiples plataformas de e-commerce y bases de datos de forma dinámica en caliente.
+
+El chatbot es capaz de interactuar con clientes reales resolviendo consultas sobre catálogos, stock de productos, agregar elementos al carrito y verificar el estado de pedidos.
+
+---
 
 ## 🚀 Arquitectura del Proyecto
 
 El sistema está compuesto por:
-1.  **Backend (NestJS):** Orquestador de la conversación (Agentic Loop), ejecución de herramientas de WooCommerce (consulta de stock, estado del pedido, buscar productos, y añadir al carrito) y conexión al LLM.
-2.  **Widget (Vite + React):** Un widget de chat autoinyectable encapsulado en un **Shadow DOM**, garantizando que los estilos CSS no tengan conflictos con la web anfitriona.
-3.  **Base de Datos (PostgreSQL):** Almacena de forma persistente la configuración de cada tienda (Tenant): prompts de sistema, URL del sitio WooCommerce, claves de API de WooCommerce y herramientas habilitadas.
-4.  **Caché (Redis):** Persiste el historial de mensajes de los chats de forma asíncrona mediante un cliente de alto rendimiento, aplicando un **TTL nativo de 30 minutos** para liberar memoria del servidor.
+
+1. **Backend (NestJS - Puerto 3000):** Orquestador de la conversación (Agentic Loop), ejecución de herramientas de venta (consulta de stock, estado del pedido, buscar productos y añadir al carrito) y comunicación con LLMs en la nube (Groq, OpenAI, Gemini) o locales (Ollama).
+2. **Panel de Administración (React + Vite + Lucide - Puerto 5173):** Panel administrativo premium donde se pueden crear, actualizar y desactivar bots (tenants), elegir el tipo de conector, rellenar sus credenciales (encriptadas automáticamente) y activar/desactivar herramientas específicas.
+3. **Widget de Cliente (React + Vite):** Widget de chat autoinyectable encapsulado en un **Shadow DOM**, garantizando que los estilos CSS no tengan conflictos con la web anfitriona. Se sirve estáticamente en `http://localhost:3000/widget.js`.
+4. **Base de Datos (PostgreSQL):** Almacena de forma persistente la configuración de cada bot y sus conectores cifrados mediante Prisma ORM.
+5. **Caché de Turnos (Redis - Puerto 6379):** Persiste el historial de mensajes de los chats de forma asíncrona, aplicando un **TTL nativo de 30 minutos** para liberar memoria del servidor automáticamente.
+
+---
+
+## 🔌 Conectores Soportados
+
+El sistema es agnóstico a la plataforma. Soporta tres conectores que implementan una interfaz común (`ICommerceConnector`):
+
+* **WooCommerce:** Conexión vía API REST usando las claves `consumerKey` y `consumerSecret`.
+* **Odoo:** Conexión mediante **JSON-RPC nativo** (compatible con Odoo 12 a 18+). Permite autenticación tradicional o vía API Key (Odoo 14+), resuelve categorías por nombre, y expone imágenes públicas dinámicas para optimizar consumo de red y tokens.
+* **Base de Datos Directa (Direct SQL):** Conexión TCP directa a bases de datos **PostgreSQL o MySQL**. Cuenta con mapeo dinámico de tablas y columnas (personalizable desde el Panel Admin) e indexa IDs alfanuméricos (como UUIDs o SKUs).
 
 ---
 
 ## 🛠️ Requisitos Previos
 
 Asegúrate de tener instalado en tu sistema local:
-*   [Docker](https://www.docker.com/products/docker-desktop)
-*   [Docker Compose](https://docs.docker.com/compose/install/)
+* [Docker](https://www.docker.com/products/docker-desktop)
+* [Docker Compose](https://docs.docker.com/compose/install/)
 
 ---
 
@@ -29,67 +45,55 @@ Copia el archivo `.env.example` en la raíz del proyecto y renómbralo a `.env`:
 ```bash
 cp .env.example .env
 ```
-Abre el archivo `.env` y configura tu API Key del LLM (ej. de Groq o Google Gemini) junto con las claves correspondientes.
+Abre el archivo `.env` y configura tus API Keys del LLM que desees usar (ej. `GROQ_API_KEY`, `OPENAI_API_KEY` o `GOOGLE_API_KEY`).
 
 ### 2. Levantar el Entorno en Docker
-Compila y levanta la base de datos Postgres, el servidor de caché Redis y el servidor de NestJS con el widget integrado en segundo plano:
+Compila y levanta la base de datos Postgres, el servidor de caché Redis, el backend NestJS y el panel React en segundo plano:
 ```bash
 docker compose up --build -d
 ```
-*Nota: Al iniciar por primera vez, el backend ejecutará automáticamente las migraciones iniciales de Prisma (`npx prisma migrate deploy`) para estructurar las tablas de la base de datos.*
+*Nota: Al iniciar por primera vez, el contenedor de la aplicación ejecutará automáticamente las migraciones iniciales de Prisma (`npx prisma migrate deploy`) para estructurar la base de datos Postgres.*
 
-### 3. Importar la Base de Datos Inicial (Volcado SQL)
-Para tener el entorno funcional de inmediato, debes importar el respaldo de base de datos de tu compañero (`respaldo_agente.sql`), el cual contiene la configuración del Tenant y sus WooCommerce Keys reales.
+### 3. Crear el primer Bot en el Panel Admin
+1. Ingresa al panel de administración en tu navegador: **`http://localhost:5173`**
+2. Inicia sesión con las credenciales por defecto (o regístrate si no tienes cuenta).
+3. Haz clic en **＋ Nuevo Bot** y configura:
+   * **Nombre del Bot:** Nombre público que se mostrará en el widget.
+   * **System Prompt:** Personalidad y contexto del bot (sin necesidad de escribir reglas de herramientas, el backend las inyecta de forma dinámica).
+   * **Tipo de Conector:** Selecciona `WooCommerce`, `Odoo` o `Base de Datos Directa`.
+   * **Credenciales:** Escribe las credenciales de acceso de tu catálogo (URLs, tokens, hosts).
+   * **Herramientas activas:** Marca las capacidades que el bot tendrá permitidas ejecutar en esa tienda.
+4. Haz clic en **Crear Bot**.
 
-Ejecuta en tu terminal:
-```bash
-# A) Vaciar el esquema generado por las migraciones iniciales para evitar conflictos de claves duplicadas
-docker exec -i bot_postgres psql -U botuser -d botdb -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-
-# B) Importar el volcado de base de datos SQL
-docker exec -i bot_postgres psql -U botuser -d botdb < respaldo_agente.sql
-```
-
-### 4. Configurar el Script en WordPress / HTML
-Una vez importada la base de datos, el identificador único (ID) del Tenant configurado será **`cmprh438b0002fgbkqslxem5t`**.
-
-Debes asegurarte de que el código del script que pegas en tu sitio de WordPress (o en tu playground HTML local `widget/index.html`) coincida exactamente con este ID en el atributo `data-tenant` para que el backend reconozca la tienda:
-
-```html
-<script 
-  src="http://localhost:3000/widget.js" 
-  data-tenant="cmprh438b0002fgbkqslxem5t" 
-  data-color="#10b981" 
-  data-bot-name="Asistente de Compras"
-></script>
-```
-
-### 5. Reiniciar el Backend
-Reinicia el servicio backend para asegurar la correcta conexión y lectura de los datos recién importados:
-```bash
-docker compose restart app
-```
-
----
-
-## 🧪 Pruebas Locales del Widget
-
-El widget de chat se sirve estáticamente en la URL: `http://localhost:3000/widget.js`
-
-1.  Abre el archivo de playground local `widget/index.html` en tu navegador (el cual ya está configurado con el ID `cmprh438b0002fgbkqslxem5t`).
-2.  Interactúa con el chatbot enviando preguntas sobre productos, stock o simulando adición al carrito.
+### 4. Probar el Widget de Chat Localmente
+1. Ve al listado de Tenants en el Panel Admin y **copia el ID** del bot que acabas de crear (ej: `cmrp9ikcv0000...`).
+2. Crea un archivo HTML local de pruebas (ej: `prueba.html`) en tu computadora con este contenido:
+   ```html
+   <!DOCTYPE html>
+   <html lang="es">
+   <head>
+       <meta charset="UTF-8">
+       <title>Prueba de Chatbot</title>
+   </head>
+   <body>
+       <h1>Página de Pruebas del Chatbot</h1>
+       
+       <!-- Script del widget del chatbot -->
+       <script 
+         src="http://localhost:3000/widget.js" 
+         data-tenant="ID_DE_TU_BOT"
+       ></script>
+   </body>
+   </html>
+   ```
+3. Reemplaza `ID_DE_TU_BOT` con el ID copiado y abre el archivo en tu navegador. 
+4. El chat aparecerá flotando listo para conversar y consultar tus productos reales.
 
 ---
 
-## 💾 Monitoreo de Sesiones en Redis
+## ⚡ Optimizaciones y Guardrails Integrados
 
-Para asegurarte de que el historial se persiste con el TTL de 30 minutos, conéctate al CLI de tu contenedor Redis:
-
-```bash
-docker exec -it bot_redis redis-cli
-```
-
-Comandos útiles en `redis-cli`:
-*   `KEYS *`: Muestra las claves de sesión activas (formato `session:sess_...`).
-*   `TTL session:<session_id>`: Muestra los segundos restantes de la sesión antes de expirar (inicia en `1800` segundos).
-*   `GET session:<session_id>`: Imprime el JSON completo con los mensajes de la conversación guardada.
+* **Limpieza de Tokens (Anti-Explosión de TPM):** Para evitar errores de límite de tokens (TPM/Rate Limits) en proveedores en la nube como Groq, el backend filtra automáticamente descripciones kilométricas y remueve imágenes codificadas en `base64` antes de enviar el historial al LLM. Las imágenes se envían intactas solo al widget web.
+* **Resolución Difusa de Categorías:** El chatbot traduce dinámicamente nombres legibles de categorías (ej: `"Equipos de Computación"`) a sus respectivos IDs en caliente, permitiendo búsquedas relajadas y flexibles.
+* **Retrocompatibilidad de Contraseñas:** En la página de edición de bot, los passwords y keys se muestran vacíos por seguridad. El backend realiza un merge inteligente conservando las contraseñas previas si no se editan, permitiendo actualizar URLs u otros campos de conexión sin tener que re-escribir las claves secretas.
+* **Bypass de Red en Docker:** Al conectar bases de datos que corren directamente en tu máquina local host en desarrollo, utiliza `host.docker.internal` en el campo Host en lugar de `localhost` para permitir que el contenedor de Docker pueda comunicarse con el host.
