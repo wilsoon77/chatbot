@@ -258,11 +258,11 @@ export class AgregarAlCarritoTool extends BaseTool {
   }
 
   async execute(args: Record<string, unknown>): Promise<string> {
-    const productId = Number(args.producto_id);
+    const productId = String(args.producto_id || '').trim();
     const quantity = Math.max(Number(args.cantidad) || 1, 1);
 
-    if (isNaN(productId)) {
-      return 'Error: El ID del producto no es válido.';
+    if (!productId) {
+      return 'Error: El ID del producto no es válido o está vacío.';
     }
 
     const resultPayload = {

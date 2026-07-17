@@ -13,6 +13,63 @@ export enum ConnectorType {
 
 // ─── Credenciales por tipo de conector ───────────────────────────────────
 
+export class ProductColumnsDto {
+  @IsString() id!: string;
+  @IsString() name!: string;
+  @IsString() price!: string;
+  @IsString() stock!: string;
+  @IsString() @IsOptional() stockStatus?: string;
+  @IsString() @IsOptional() sku?: string;
+  @IsString() @IsOptional() description?: string;
+  @IsString() @IsOptional() image?: string;
+  @IsString() @IsOptional() url?: string;
+  @IsString() @IsOptional() categoryId?: string;
+}
+
+export class CategoryColumnsDto {
+  @IsString() id!: string;
+  @IsString() name!: string;
+  @IsString() @IsOptional() count?: string;
+}
+
+export class OrderColumnsDto {
+  @IsString() id!: string;
+  @IsString() status!: string;
+  @IsString() total!: string;
+  @IsString() date!: string;
+  @IsString() @IsOptional() email?: string;
+}
+
+export class OrderItemColumnsDto {
+  @IsString() orderId!: string;
+  @IsString() productName!: string;
+  @IsString() quantity!: string;
+  @IsString() price!: string;
+}
+
+export class TableMappingDto {
+  @IsString() products!: string;
+  @IsString() categories!: string;
+  @IsString() orders!: string;
+  @IsString() orderItems!: string;
+
+  @ValidateNested()
+  @Type(() => ProductColumnsDto)
+  product!: ProductColumnsDto;
+
+  @ValidateNested()
+  @Type(() => CategoryColumnsDto)
+  category!: CategoryColumnsDto;
+
+  @ValidateNested()
+  @Type(() => OrderColumnsDto)
+  order!: OrderColumnsDto;
+
+  @ValidateNested()
+  @Type(() => OrderItemColumnsDto)
+  orderItem!: OrderItemColumnsDto;
+}
+
 /** Credenciales para WooCommerce (API REST). */
 export class WooCommerceCredentialsDto {
   @IsString()
@@ -63,59 +120,3 @@ export class DatabaseCredentialsDto {
   tableMapping?: TableMappingDto;
 }
 
-export class TableMappingDto {
-  @IsString() products!: string;
-  @IsString() categories!: string;
-  @IsString() orders!: string;
-  @IsString() orderItems!: string;
-
-  @ValidateNested()
-  @Type(() => ProductColumnsDto)
-  product!: ProductColumnsDto;
-
-  @ValidateNested()
-  @Type(() => CategoryColumnsDto)
-  category!: CategoryColumnsDto;
-
-  @ValidateNested()
-  @Type(() => OrderColumnsDto)
-  order!: OrderColumnsDto;
-
-  @ValidateNested()
-  @Type(() => OrderItemColumnsDto)
-  orderItem!: OrderItemColumnsDto;
-}
-
-export class ProductColumnsDto {
-  @IsString() id!: string;
-  @IsString() name!: string;
-  @IsString() price!: string;
-  @IsString() stock!: string;
-  @IsString() @IsOptional() stockStatus?: string;
-  @IsString() @IsOptional() sku?: string;
-  @IsString() @IsOptional() description?: string;
-  @IsString() @IsOptional() image?: string;
-  @IsString() @IsOptional() url?: string;
-  @IsString() @IsOptional() categoryId?: string;
-}
-
-export class CategoryColumnsDto {
-  @IsString() id!: string;
-  @IsString() name!: string;
-  @IsString() @IsOptional() count?: string;
-}
-
-export class OrderColumnsDto {
-  @IsString() id!: string;
-  @IsString() status!: string;
-  @IsString() total!: string;
-  @IsString() date!: string;
-  @IsString() @IsOptional() email?: string;
-}
-
-export class OrderItemColumnsDto {
-  @IsString() orderId!: string;
-  @IsString() productName!: string;
-  @IsString() quantity!: string;
-  @IsString() price!: string;
-}

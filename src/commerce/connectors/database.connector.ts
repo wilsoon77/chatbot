@@ -180,7 +180,8 @@ export class DatabaseConnector implements ICommerceConnector {
 
     if (driver === 'postgresql') {
       // PostgreSQL: parámetros $1, $2, ...
-      const pgSql = sql.replace(/\?/g, (_, i) => `$${i + 1}`);
+      let paramIndex = 1;
+      const pgSql = sql.replace(/\?/g, () => `$${paramIndex++}`);
       const result = await pool.query(pgSql, params);
       return result.rows as T[];
     } else {

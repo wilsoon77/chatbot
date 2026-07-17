@@ -33,9 +33,13 @@ interface FormErrors {
 export function EditTenantPage({ tenant, onLogout, onNavigate }: EditTenantPageProps) {
   const initialConnectorType = (tenant.connectorType || 'WOOCOMMERCE') as ConnectorType;
   // Las credenciales que vienen del backend tienen los campos sensibles enmascarados ("••••••••").
-  // Las usamos como base para mostrar valores no sensibles, pero los campos de password se envían
-  // solo si el usuario escribe algo nuevo.
-  const initialCredentials = tenant.connectorCredentials || getDefaultCredentials(initialConnectorType);
+  // Las limpiamos para que en la UI aparezcan vacías y puedan ser editadas.
+  const initialCredentials = { ...(tenant.connectorCredentials || getDefaultCredentials(initialConnectorType)) };
+  Object.keys(initialCredentials).forEach((key) => {
+    if (initialCredentials[key] === '••••••••') {
+      initialCredentials[key] = '';
+    }
+  });
 
   const [connectorType, setConnectorType] = useState<ConnectorType>(initialConnectorType);
   const [connectorCredentials, setConnectorCredentials] = useState<Record<string, any>>(initialCredentials);
@@ -106,31 +110,16 @@ export function EditTenantPage({ tenant, onLogout, onNavigate }: EditTenantPageP
     setLoading(true);
     setApiError(null);
 
-    // Construir payload: solo incluir credenciales si el tipo cambió o si el usuario
-    // modificó algún campo de password (no enmascarado)
+    // Construir payload: incluimos siempre las credenciales, el backend se encargará
+    // de conservar los passwords antiguos si se envían vacíos.
     const payload: Record<string, unknown> = {
       nombre:         form.nombre,
       systemPrompt:   form.systemPrompt,
       enabledTools:   form.enabledTools,
       redisTTL:       Number(form.redisTTL),
+      connectorType,
+      connectorCredentials,
     };
-
-    // Si cambió el tipo de conector, enviar el nuevo tipo y todas las credenciales
-    if (connectorType !== initialConnectorType) {
-      payload.connectorType = connectorType;
-      payload.connectorCredentials = connectorCredentials;
-    } else {
-      // Mismo tipo: solo enviar credenciales si el usuario modificó campos de password
-      // (los que no están enmascarados con "••••••••")
-      const hasNewPassword = Object.entries(connectorCredentials).some(([key, val]) => {
-        const isPasswordField = key === 'password' || key === 'consumerSecret' || key === 'consumerKey';
-        return isPasswordField && val && val !== '••••••••' && val !== initialCredentials[key];
-      });
-
-      if (hasNewPassword) {
-        payload.connectorCredentials = connectorCredentials;
-      }
-    }
 
     try {
       await tenantsService.update(tenant.id, payload);

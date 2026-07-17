@@ -15,19 +15,23 @@ export const buscarProductosSchema = z.object({
 });
 
 export const verStockSchema = z.object({
-  producto_id: z.coerce.number({
+  producto_id: z.union([z.string(), z.number()], {
     required_error: 'El parámetro "producto_id" es obligatorio.',
-    invalid_type_error: 'El parámetro "producto_id" debe ser un número.',
-  }).int('El ID del producto debe ser un número entero.').positive('El ID del producto debe ser un número positivo.'),
+    invalid_type_error: 'El parámetro "producto_id" debe ser un número o texto.',
+  }).transform((val) => String(val).trim()).refine((val) => val.length > 0, {
+    message: 'El parámetro "producto_id" no puede estar vacío.',
+  }),
 });
 
 export const obtenerCategoriasSchema = z.object({});
 
 export const agregarAlCarritoSchema = z.object({
-  producto_id: z.coerce.number({
+  producto_id: z.union([z.string(), z.number()], {
     required_error: 'El parámetro "producto_id" es obligatorio.',
-    invalid_type_error: 'El parámetro "producto_id" debe ser un número.',
-  }).int('El ID del producto debe ser un número entero.').positive('El ID del producto debe ser un número positivo.'),
+    invalid_type_error: 'El parámetro "producto_id" debe ser un número o texto.',
+  }).transform((val) => String(val).trim()).refine((val) => val.length > 0, {
+    message: 'El parámetro "producto_id" no puede estar vacío.',
+  }),
   
   cantidad: z.coerce.number({
     invalid_type_error: 'La cantidad debe ser un número.',

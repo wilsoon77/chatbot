@@ -110,7 +110,7 @@ export function ConnectorFields({ type, credentials, errors, onChange, isEdit }:
           {row.map((field) => {
             const errorKey = `${type}.${field.key}`;
             const value = credentials[field.key] ?? '';
-            const displayValue = isEdit && field.type === 'password' ? '' : value;
+            const displayValue = value;
 
             return (
               <div key={field.key} className={`nt-field ${errors[errorKey] ? 'nt-field--error' : ''}`}>

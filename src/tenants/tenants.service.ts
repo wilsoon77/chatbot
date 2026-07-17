@@ -217,8 +217,21 @@ export class TenantsService {
 
     // Si se envían credenciales nuevas, validarlas y reemplazar
     if (data.connectorCredentials) {
-      this.validateCredentials(connectorType, data.connectorCredentials);
-      credsObj = data.connectorCredentials;
+      const mergedCredentials = { ...data.connectorCredentials };
+      
+      // Si el campo de contraseña viene vacío o con la máscara, restaurar la contraseña anterior
+      const passwordKeys = ['password', 'consumerSecret'];
+      passwordKeys.forEach((key) => {
+        const val = mergedCredentials[key];
+        if (val === undefined || val === '' || val === '••••••••') {
+          if (credsObj[key]) {
+            mergedCredentials[key] = credsObj[key];
+          }
+        }
+      });
+
+      this.validateCredentials(connectorType, mergedCredentials);
+      credsObj = mergedCredentials;
     }
 
     const encryptedCredentials = this.cryptoService.encrypt(JSON.stringify(credsObj));
