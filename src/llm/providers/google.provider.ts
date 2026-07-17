@@ -9,6 +9,7 @@ import type {
   ToolCall,
 } from '../llm.interfaces.js';
 import { resolveTemperature } from '../utils/model-params.js';
+import { cleanToolContentForLlm } from '../utils/coerce-args.js';
 
 /**
  * Provider de Google Gemini.
@@ -194,7 +195,7 @@ export class GoogleProvider implements ILlmProvider {
         });
       } else if (msg.role === 'tool') {
         let responsePayload: Record<string, unknown>;
-        const contentStr = msg.content || '{}';
+        const contentStr = msg.content ? cleanToolContentForLlm(msg.content) : '{}';
         try {
           responsePayload = JSON.parse(contentStr);
         } catch {

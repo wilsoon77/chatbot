@@ -7,7 +7,7 @@ import type {
   LlmResponse,
   ToolCall,
 } from '../llm.interfaces.js';
-import { coerceNumericArgs } from '../utils/coerce-args.js';
+import { coerceNumericArgs, cleanToolContentForLlm } from '../utils/coerce-args.js';
 import { resolveTemperature, resolveTimeoutMs } from '../utils/model-params.js';
 
 /**
@@ -47,7 +47,7 @@ export class OllamaProvider implements ILlmProvider {
       if (msg.role === 'tool') {
         return {
           role: 'tool' as const,
-          content: msg.content,
+          content: msg.content ? cleanToolContentForLlm(msg.content) : null,
           tool_call_id: msg.toolCallId || '',
           name: msg.toolName || '',
         };
@@ -191,7 +191,7 @@ export class OllamaProvider implements ILlmProvider {
       if (msg.role === 'tool') {
         return {
           role: 'tool' as const,
-          content: msg.content,
+          content: msg.content ? cleanToolContentForLlm(msg.content) : null,
           tool_call_id: msg.toolCallId || '',
           name: msg.toolName || '',
         };

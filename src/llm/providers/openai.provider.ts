@@ -7,7 +7,7 @@ import type {
   LlmResponse,
   ToolCall,
 } from '../llm.interfaces.js';
-import { coerceNumericArgs } from '../utils/coerce-args.js';
+import { coerceNumericArgs, cleanToolContentForLlm } from '../utils/coerce-args.js';
 import { resolveTemperature } from '../utils/model-params.js';
 
 /**
@@ -38,12 +38,11 @@ export class OpenAiProvider implements ILlmProvider {
       throw new Error('La variable OPENAI_API_KEY no está configurada.');
     }
 
-    // Convertir mensajes al formato compatible con OpenAI
     const openaiMessages = messages.map((msg) => {
       if (msg.role === 'tool') {
         return {
           role: 'tool' as const,
-          content: msg.content,
+          content: msg.content ? cleanToolContentForLlm(msg.content) : null,
           tool_call_id: msg.toolCallId || '',
           name: msg.toolName || '',
         };
@@ -173,7 +172,7 @@ export class OpenAiProvider implements ILlmProvider {
       if (msg.role === 'tool') {
         return {
           role: 'tool' as const,
-          content: msg.content,
+          content: msg.content ? cleanToolContentForLlm(msg.content) : null,
           tool_call_id: msg.toolCallId || '',
           name: msg.toolName || '',
         };

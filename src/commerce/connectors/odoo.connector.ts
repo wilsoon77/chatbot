@@ -51,10 +51,55 @@ export class OdooConnector implements ICommerceConnector {
 
   private uid: number | null = null;
   private requestId = 0;
+  private availableProductFields: string[] | null = null;
 
   constructor(credentials: OdooCredentials) {
     this.creds = credentials;
     this.currency = credentials.currency || '$';
+  }
+
+  /**
+   * Obtiene dinámicamente los campos disponibles en el modelo product.template,
+   * verificando si la instancia del cliente tiene disponible el campo website_url.
+   */
+  private async getProductFields(): Promise<string[]> {
+    if (this.availableProductFields !== null) {
+      return this.availableProductFields;
+    }
+
+    const baseFields = [
+      'id', 'name', 'display_name',
+      'list_price',          // precio de venta
+      'default_code',        // SKU / referencia interna
+      'barcode',
+      'description_sale',    // descripción de venta
+      'categ_id',            // categoría [id, name]
+      'qty_available',        // stock disponible
+      'virtual_available',   // stock forecastado
+      'type',                // consu, service, storable
+    ];
+
+    try {
+      // Preguntamos a Odoo si existe el campo website_url en product.template
+      const fieldsInfo = await this.executeKw<Record<string, any>>(
+        'product.template',
+        'fields_get',
+        [[], ['website_url']],
+      );
+      if (fieldsInfo && fieldsInfo.website_url) {
+        baseFields.push('website_url');
+        this.logger.debug('Campo "website_url" disponible y activado en Odoo.');
+      } else {
+        this.logger.debug('Campo "website_url" no disponible en Odoo (módulo Website no instalado).');
+      }
+    } catch (e) {
+      this.logger.warn(
+        `No se pudo verificar disponibilidad de website_url en Odoo: ${(e as Error).message}. Se ignorará el campo.`
+      );
+    }
+
+    this.availableProductFields = baseFields;
+    return this.availableProductFields;
   }
 
   // ─── JSON-RPC de bajo nivel ─────────────────────────────────────────────
@@ -184,24 +229,14 @@ export class OdooConnector implements ICommerceConnector {
       }
     }
 
+    const fieldsToRead = await this.getProductFields();
+
     const products = await this.executeKw<any[]>(
       'product.template',
       'search_read',
       [domain],
       {
-        fields: [
-          'id', 'name', 'display_name',
-          'list_price',          // precio de venta
-          'default_code',        // SKU / referencia interna
-          'barcode',
-          'description_sale',    // descripción de venta
-          'categ_id',            // categoría [id, name]
-          'qty_available',        // stock disponible
-          'virtual_available',   // stock forecastado
-          'image_128',           // imagen pequeña (base64)
-          'website_url',         // URL en el sitio web (si website está instalado)
-          'type',                // consu, service, storable
-        ],
+        fields: fieldsToRead,
         limit: limite,
         order: 'name ASC',
       },
@@ -435,11 +470,9 @@ export class OdooConnector implements ICommerceConnector {
       categorias.push(Array.isArray(p.categ_id) ? p.categ_id[1] : String(p.categ_id));
     }
 
-    // Imagen: Odoo devuelve base64 en image_128
-    let imagen: string | null = null;
-    if (p.image_128) {
-      imagen = `data:image/png;base64,${p.image_128}`;
-    }
+    // Imagen: en vez de descargar y enviar el binario base64 pesado,
+    // construimos la URL pública nativa de Odoo para obtener la imagen directamente.
+    const imagen = `${this.creds.url.replace(/\/$/, '')}/web/image/product.template/${p.id}/image_128`;
 
     // URL del producto en el sitio web (si el módulo website está instalado)
     let url: string | null = null;

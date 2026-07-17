@@ -1,4 +1,5 @@
 import { authService } from '../../auth/services/authService';
+import { Home, Users, Bot, LogOut, MessageSquare } from 'lucide-react';
 import './DashboardPage.css';
 import logo from '../../../assets/images/chatgo.png';
 import type { Page } from '../../../types/navigation';
@@ -27,11 +28,13 @@ export function DashboardPage({ onLogout, onNavigate }: DashboardPageProps) {
         </div>
 
         <nav className="dashboard__nav">
-          <a className="dashboard__nav-item dashboard__nav-item--active" href="#">
-            Inicio
+          <a className="dashboard__nav-item dashboard__nav-item--active" href="#" onClick={(e) => e.preventDefault()}>
+            <Home className="dashboard__nav-icon" size={18} />
+            <span>Inicio</span>
           </a>
-          <a className="dashboard__nav-item" href="#">
-            Usuarios
+          <a className="dashboard__nav-item" href="#" onClick={(e) => { e.preventDefault(); onNavigate('users'); }}>
+            <Users className="dashboard__nav-icon" size={18} />
+            <span>Usuarios</span>
           </a>
           <a
             className="dashboard__nav-item"
@@ -41,12 +44,14 @@ export function DashboardPage({ onLogout, onNavigate }: DashboardPageProps) {
               onNavigate('tenants');
             }}
           >
-            Tenants
+            <Bot className="dashboard__nav-icon" size={18} />
+            <span>Tenants</span>
           </a>
         </nav>
 
         <button className="dashboard__logout" onClick={handleLogout}>
-          Cerrar sesión
+          <LogOut size={16} />
+          <span>Cerrar sesión</span>
         </button>
       </aside>
 
@@ -72,8 +77,8 @@ export function DashboardPage({ onLogout, onNavigate }: DashboardPageProps) {
 
           <div className="dashboard__cards">
 
-            <div className="dashboard__card">
-              <span className="dashboard__card-icon"></span>
+            <div className="dashboard__card" onClick={() => onNavigate('users')}>
+              <Users className="dashboard__card-icon" size={32} />
               <h3>Usuarios</h3>
               <p>Gestiona los usuarios del sistema</p>
             </div>
@@ -82,13 +87,13 @@ export function DashboardPage({ onLogout, onNavigate }: DashboardPageProps) {
               className="dashboard__card"
               onClick={() => onNavigate('tenants')}
             >
-              <span className="dashboard__card-icon"></span>
+              <Bot className="dashboard__card-icon" size={32} />
               <h3>Tenants</h3>
               <p>Administra los tenants del chatbot</p>
             </div>
 
             <div className="dashboard__card">
-              <span className="dashboard__card-icon"></span>
+              <MessageSquare className="dashboard__card-icon" size={32} />
               <h3>Chats</h3>
               <p>Revisa las conversaciones activas</p>
             </div>

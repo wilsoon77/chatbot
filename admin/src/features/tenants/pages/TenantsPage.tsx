@@ -1,5 +1,6 @@
 import { useTenants } from '../hooks/useTenants';
 import { TenantCard } from '../components/TenantCardFinal';
+import { Home, Users, Bot, LogOut, RefreshCw, Plus, HelpCircle } from 'lucide-react';
 import './TenantsPage.css';
 import logo from '../../../assets/images/chatgo.png';
 
@@ -36,7 +37,8 @@ export function TenantsPage({
               onNavigate('dashboard');
             }}
           >
-            Inicio
+            <Home className="dashboard__nav-icon" size={18} />
+            <span>Inicio</span>
           </a>
 
           <a
@@ -47,7 +49,8 @@ export function TenantsPage({
               onNavigate('users');
             }}
           >
-            Usuarios
+            <Users className="dashboard__nav-icon" size={18} />
+            <span>Usuarios</span>
           </a>
 
           <a
@@ -55,12 +58,14 @@ export function TenantsPage({
             href="#"
             onClick={(e) => e.preventDefault()}
           >
-            Tenants
+            <Bot className="dashboard__nav-icon" size={18} />
+            <span>Tenants</span>
           </a>
         </nav>
 
         <button className="dashboard__logout" onClick={onLogout}>
-          Cerrar sesión
+          <LogOut size={16} />
+          <span>Cerrar sesión</span>
         </button>
       </aside>
 
@@ -73,14 +78,16 @@ export function TenantsPage({
               className="tenants__btn-refresh"
               onClick={refetch}
             >
-              Refrescar
+              <RefreshCw size={14} className="nt-btn-icon-spin" />
+              <span>Refrescar</span>
             </button>
 
             <button
               className="tenants__btn-new"
               onClick={() => onNavigate('new-tenant')}
             >
-              ＋ Nuevo Bot
+              <Plus size={14} />
+              <span>Nuevo Bot</span>
             </button>
           </div>
         </header>
@@ -108,7 +115,9 @@ export function TenantsPage({
 
           {!loading && !error && tenants.length === 0 && (
             <div className="tenants__empty">
-              <div className="tenants__empty-icon">🤖</div>
+              <div className="tenants__empty-icon">
+                <Bot size={48} />
+              </div>
 
               <h2>No hay ningún bot todavía</h2>
 
@@ -120,7 +129,8 @@ export function TenantsPage({
                 className="tenants__btn-new"
                 onClick={() => onNavigate('new-tenant')}
               >
-                ＋ Nuevo Bot
+                <Plus size={14} />
+                <span>Nuevo Bot</span>
               </button>
             </div>
           )}

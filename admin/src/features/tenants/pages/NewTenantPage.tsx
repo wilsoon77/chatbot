@@ -3,6 +3,7 @@ import { tenantsService } from '../service/tenantsService';
 import type { ConnectorType } from '../service/tenantsService';
 import { CONNECTOR_LABELS } from '../service/tenantsService';
 import { ConnectorFields, getDefaultCredentials, validateConnectorCredentials } from '../components/ConnectorFields';
+import { Home, Users, Bot, LogOut, ArrowLeft, Plus, ShoppingBag, Database, Briefcase, Key } from 'lucide-react';
 import type { Page } from '../../../types/navigation';
 import './NewTenantPage.css';
 import logo from '../../../assets/images/chatgo.png';
@@ -129,17 +130,32 @@ export function NewTenantPage({ onLogout, onNavigate }: NewTenantPageProps) {
           <span>Chat-Go</span>
         </div>
         <nav className="dashboard__nav">
-          <a className="dashboard__nav-item" href="#" onClick={(e) => { e.preventDefault(); onNavigate('dashboard'); }}>Inicio</a>
-          <a className="dashboard__nav-item" href="#" onClick={(e) => { e.preventDefault(); onNavigate('users'); }}>Usuarios</a>
-          <a className="dashboard__nav-item dashboard__nav-item--active" href="#" onClick={(e) => { e.preventDefault(); onNavigate('tenants'); }}>Tenants</a>
+          <a className="dashboard__nav-item" href="#" onClick={(e) => { e.preventDefault(); onNavigate('dashboard'); }}>
+            <Home className="dashboard__nav-icon" size={18} />
+            <span>Inicio</span>
+          </a>
+          <a className="dashboard__nav-item" href="#" onClick={(e) => { e.preventDefault(); onNavigate('users'); }}>
+            <Users className="dashboard__nav-icon" size={18} />
+            <span>Usuarios</span>
+          </a>
+          <a className="dashboard__nav-item dashboard__nav-item--active" href="#" onClick={(e) => e.preventDefault()}>
+            <Bot className="dashboard__nav-icon" size={18} />
+            <span>Tenants</span>
+          </a>
         </nav>
-        <button className="dashboard__logout" onClick={onLogout}>Cerrar sesión</button>
+        <button className="dashboard__logout" onClick={onLogout}>
+          <LogOut size={16} />
+          <span>Cerrar sesión</span>
+        </button>
       </aside>
 
       <main className="dashboard__main">
         <header className="dashboard__header">
           <div className="new-tenant__breadcrumb">
-            <button className="new-tenant__back" onClick={() => onNavigate('tenants')}>← Tenants</button>
+            <button className="new-tenant__back" onClick={() => onNavigate('tenants')}>
+              <ArrowLeft size={16} />
+              <span>Volver a Tenants</span>
+            </button>
             <span className="new-tenant__breadcrumb-sep">/</span>
             <span>Nuevo Bot</span>
           </div>
@@ -194,7 +210,7 @@ export function NewTenantPage({ onLogout, onNavigate }: NewTenantPageProps) {
                     onClick={() => handleConnectorTypeChange(value)}
                   >
                     <span className="nt-connector-type__icon">
-                      {value === 'WOOCOMMERCE' ? '🛒' : value === 'DIRECT_DATABASE' ? '🗄️' : '🏢'}
+                      {value === 'WOOCOMMERCE' ? <ShoppingBag size={20} /> : value === 'DIRECT_DATABASE' ? <Database size={20} /> : <Briefcase size={20} />}
                     </span>
                     <span className="nt-connector-type__label">{label}</span>
                   </button>
@@ -206,7 +222,8 @@ export function NewTenantPage({ onLogout, onNavigate }: NewTenantPageProps) {
             <div className="nt-keys-section">
               <div className="nt-keys-header">
                 <span className="nt-keys-title">
-                  🔑 Credenciales — {CONNECTOR_LABELS[connectorType]}
+                  <Key size={16} className="nt-keys-title-icon" />
+                  <span>Credenciales — {CONNECTOR_LABELS[connectorType]}</span>
                 </span>
               </div>
               <ConnectorFields
@@ -263,7 +280,12 @@ export function NewTenantPage({ onLogout, onNavigate }: NewTenantPageProps) {
                 Cancelar
               </button>
               <button type="submit" className="nt-btn-submit" disabled={loading || promptOver}>
-                {loading ? 'Creando...' : '＋ Crear Bot'}
+                {loading ? 'Creando...' : (
+                  <>
+                    <Plus size={16} />
+                    <span>Crear Bot</span>
+                  </>
+                )}
               </button>
             </div>
           </form>

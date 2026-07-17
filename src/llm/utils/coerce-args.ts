@@ -38,3 +38,45 @@ export function coerceNumericArgs(
   }
   return coerced;
 }
+
+/**
+ * Limpia y optimiza el contenido de respuesta de una herramienta (especialmente buscar_productos)
+ * antes de enviarlo al LLM externo (Groq/OpenAI) para evitar desperdicio de tokens y fallos de límite TPM.
+ *
+ * Remueve imágenes en formato base64 y recorta descripciones largas de productos.
+ */
+export function cleanToolContentForLlm(content: string): string {
+  try {
+    const parsed = JSON.parse(content);
+
+    const cleanProduct = (p: any) => {
+      if (typeof p !== 'object' || p === null) return p;
+      const cleaned = { ...p };
+      
+      // 1. Eliminar imágenes base64 (empiezan por data:)
+      if (typeof cleaned.imagen === 'string' && cleaned.imagen.startsWith('data:')) {
+        cleaned.imagen = null;
+      }
+      // 2. Recortar descripción excesivamente larga
+      if (typeof cleaned.descripcion === 'string' && cleaned.descripcion.length > 150) {
+        cleaned.descripcion = cleaned.descripcion.slice(0, 150) + '... (recortado para optimizar tokens)';
+      }
+      return cleaned;
+    };
+
+    if (Array.isArray(parsed)) {
+      return JSON.stringify(parsed.map(cleanProduct));
+    } else if (parsed && typeof parsed === 'object') {
+      // Si tiene estructura de partial_match o similar
+      if (Array.isArray(parsed.productos)) {
+        parsed.productos = parsed.productos.map(cleanProduct);
+      }
+      // Si es un producto único
+      const cleanedObj = cleanProduct(parsed);
+      return JSON.stringify(cleanedObj);
+    }
+  } catch {
+    // Si no es JSON válido o falla, retornar el contenido original
+  }
+  return content;
+}
