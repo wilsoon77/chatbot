@@ -70,8 +70,13 @@ export class ChatService {
       const reply = inputResult.reply || 'Lo siento, no puedo procesar este mensaje.';
       const userMsg: Message = { role: 'user', content: userMessage };
       const assistantMsg: Message = { role: 'assistant', content: reply };
-      const history = await this.sessionService.getHistory(sessionId);
-      await this.sessionService.saveHistory(sessionId, [...history, userMsg, assistantMsg]);
+      const history = await this.sessionService.getHistory(tenantId, sessionId);
+      await this.sessionService.saveHistory(
+        tenantId,
+        sessionId,
+        [...history, userMsg, assistantMsg],
+        tenant.redisTTL,
+      );
       return { reply };
     }
     const cleanUserMessage = inputResult.sanitized;
@@ -80,7 +85,7 @@ export class ChatService {
     const pendingActionContainer: { action?: any } = {};
 
     // Carga asíncronamente el historial de la conversación desde Redis
-    const history = await this.sessionService.getHistory(sessionId);
+    const history = await this.sessionService.getHistory(tenantId, sessionId);
     const messages: Message[] = await this.buildBaseMessages(
       tenant.id,
       tenant.systemPrompt,
@@ -108,7 +113,7 @@ export class ChatService {
       const assistantMsg: Message = { role: 'assistant', content: reply };
       messages.push(assistantMsg);
       const historyToSave = this.filterHistoryForPersistence(messages);
-      await this.sessionService.saveHistory(sessionId, historyToSave);
+      await this.sessionService.saveHistory(tenantId, sessionId, historyToSave, tenant.redisTTL);
       return { reply };
     }
 
@@ -125,7 +130,7 @@ export class ChatService {
     } catch (e) {
       // Guardar historial acumulado hasta el momento del error (excluyendo prompt de sistema)
       const historyToSave = this.filterHistoryForPersistence(messages);
-      await this.sessionService.saveHistory(sessionId, historyToSave);
+      await this.sessionService.saveHistory(tenantId, sessionId, historyToSave, tenant.redisTTL);
 
       if ((e as Error).message === 'LIMIT_EXCEEDED') {
         const errorReply =
@@ -153,7 +158,7 @@ export class ChatService {
 
     // Guardar historial completo al final
     const historyToSave = this.filterHistoryForPersistence(messages, lastFoundProductsContainer.products);
-    await this.sessionService.saveHistory(sessionId, historyToSave);
+    await this.sessionService.saveHistory(tenantId, sessionId, historyToSave, tenant.redisTTL);
 
     return {
       reply,
@@ -185,8 +190,13 @@ export class ChatService {
       const reply = inputResult.reply || 'Lo siento, no puedo procesar este mensaje.';
       const userMsg: Message = { role: 'user', content: userMessage };
       const assistantMsg: Message = { role: 'assistant', content: reply };
-      const history = await this.sessionService.getHistory(sessionId);
-      await this.sessionService.saveHistory(sessionId, [...history, userMsg, assistantMsg]);
+      const history = await this.sessionService.getHistory(tenantId, sessionId);
+      await this.sessionService.saveHistory(
+        tenantId,
+        sessionId,
+        [...history, userMsg, assistantMsg],
+        tenant.redisTTL,
+      );
       await onToken(reply);
       return;
     }
@@ -195,7 +205,7 @@ export class ChatService {
     const lastFoundProductsContainer: { products?: any[] } = {};
     const pendingActionContainer: { action?: any } = {};
 
-    const history = await this.sessionService.getHistory(sessionId);
+    const history = await this.sessionService.getHistory(tenantId, sessionId);
     const messages: Message[] = await this.buildBaseMessages(
       tenant.id,
       tenant.systemPrompt,
@@ -205,7 +215,7 @@ export class ChatService {
       tenant.enabledTools,
     );
 
-    // ── Router de intención: small-talk puro → streaming real SIN tools ──
+    // ── Router de intención: small-talk puro, sin tools ──
     const intent = this.intentRouter.classifyWithLog(cleanUserMessage);
     // Cambio 3: respuestas cortas sin acción pendiente → directo sin tools.
     const hasProductContext = this.hasRecentProductContext(history);
@@ -220,10 +230,6 @@ export class ChatService {
         const stream = await this.llmService.chatStream(messages);
         for await (const token of stream) {
           fullReply += token;
-          const cleanToken = token.replace(this.outputGuard.EMOJI_REGEX, '');
-          if (cleanToken) {
-            await onToken(cleanToken);
-          }
         }
       } catch (err) {
         this.logger.warn(
@@ -231,20 +237,17 @@ export class ChatService {
         );
         const noToolResponse = await this.llmService.chat(messages, []);
         fullReply = noToolResponse.text || 'Hola, ¿en qué puedo ayudarte?';
-        const tokens = fullReply.match(/\S+\s*/g) || [fullReply];
-        for (const token of tokens) {
-          const cleanToken = token.replace(this.outputGuard.EMOJI_REGEX, '');
-          if (cleanToken) {
-            await onToken(cleanToken);
-          }
-        }
       }
 
-      const sanitizedReply = this.outputGuard.sanitize(fullReply, tenant.woocommerceUrl);
+      const sanitizedReply = await this.emitSanitizedReply(
+        fullReply,
+        tenant.woocommerceUrl,
+        onToken,
+      );
       const assistantMsg: Message = { role: 'assistant', content: sanitizedReply };
       messages.push(assistantMsg);
       const historyToSave = this.filterHistoryForPersistence(messages);
-      await this.sessionService.saveHistory(sessionId, historyToSave);
+      await this.sessionService.saveHistory(tenantId, sessionId, historyToSave, tenant.redisTTL);
       return;
     }
 
@@ -261,7 +264,7 @@ export class ChatService {
     } catch (e) {
       // Guardar historial acumulado hasta el momento del error (excluyendo prompt de sistema)
       const historyToSave = this.filterHistoryForPersistence(messages);
-      await this.sessionService.saveHistory(sessionId, historyToSave);
+      await this.sessionService.saveHistory(tenantId, sessionId, historyToSave, tenant.redisTTL);
 
       if ((e as Error).message === 'LIMIT_EXCEEDED') {
         await onToken(
@@ -297,21 +300,22 @@ export class ChatService {
         }
       }
     } else if (loopResult.executedTools) {
-      // Generar la respuesta final en streaming real usando chatStream
-      this.logger.log('Generando respuesta final en streaming real tras herramientas...');
+      // Generar la respuesta y retenerla hasta aplicar el guard de salida.
+      this.logger.log('Generando respuesta final tras herramientas...');
       const stream = await this.llmService.chatStream(messages);
       for await (const token of stream) {
         fullReply += token;
-        const cleanToken = token.replace(this.outputGuard.EMOJI_REGEX, '');
-        if (cleanToken) {
-          await onToken(cleanToken);
-        }
       }
-      // Sanitizar la salida completa al final
-      fullReply = this.outputGuard.sanitize(fullReply, tenant.woocommerceUrl);
+      // Nunca se emiten tokens del proveedor antes de aplicar el guard de salida.
+      fullReply = await this.emitSanitizedReply(
+        fullReply,
+        tenant.woocommerceUrl,
+        onToken,
+      );
     } else {
       // Fallback
       fullReply = 'Lo siento, no pude generar una respuesta.';
+      await this.emitSanitizedReply(fullReply, tenant.woocommerceUrl, onToken);
     }
 
     const assistantMsg: Message = { role: 'assistant', content: fullReply };
@@ -319,12 +323,30 @@ export class ChatService {
 
     // Guardar historial completo al final
     const historyToSave = this.filterHistoryForPersistence(messages, lastFoundProductsContainer.products);
-    await this.sessionService.saveHistory(sessionId, historyToSave);
+    await this.sessionService.saveHistory(tenantId, sessionId, historyToSave, tenant.redisTTL);
   }
 
   // ───────────────────────────────────────────────────────────────────────
   // Helpers compartidos
   // ───────────────────────────────────────────────────────────────────────
+
+  private async emitSanitizedReply(
+    rawReply: string,
+    tenantUrl: string | undefined,
+    onToken: (token: string) => Promise<void> | void,
+  ): Promise<string> {
+    const sanitizedReply = this.outputGuard.sanitize(rawReply, tenantUrl);
+    const tokens = sanitizedReply.match(/\S+\s*/g) || (sanitizedReply ? [sanitizedReply] : []);
+
+    for (const token of tokens) {
+      const cleanToken = token.replace(this.outputGuard.EMOJI_REGEX, '');
+      if (cleanToken) {
+        await onToken(cleanToken);
+      }
+    }
+
+    return sanitizedReply;
+  }
 
   /**
    * Indica si el historial reciente contiene un mensaje de contexto de

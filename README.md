@@ -2,7 +2,7 @@
 
 Este proyecto es un sistema de chatbot conversacional inteligente (agente de IA) multi-tenant y multi-conector, diseñado para integrarse con múltiples plataformas de e-commerce y bases de datos de forma dinámica en caliente.
 
-El chatbot es capaz de interactuar con clientes reales resolviendo consultas sobre catálogos, stock de productos, agregar elementos al carrito y verificar el estado de pedidos.
+El chatbot es capaz de interactuar con clientes reales resolviendo consultas sobre catálogos, stock de productos y agregar elementos al carrito. Las consultas de pedidos requieren un flujo de verificación de identidad y no se habilitan como herramienta pública por defecto.
 
 ---
 
@@ -10,7 +10,7 @@ El chatbot es capaz de interactuar con clientes reales resolviendo consultas sob
 
 El sistema está compuesto por:
 
-1. **Backend (NestJS - Puerto 3000):** Orquestador de la conversación (Agentic Loop), ejecución de herramientas de venta (consulta de stock, estado del pedido, buscar productos y añadir al carrito) y comunicación con LLMs en la nube (Groq, OpenAI, Gemini) o locales (Ollama).
+1. **Backend (NestJS - Puerto 3000):** Orquestador de la conversación (Agentic Loop), ejecución de herramientas de venta (consulta de stock, buscar productos y añadir al carrito) y comunicación con LLMs en la nube (Groq, OpenAI, Gemini) o locales (Ollama).
 2. **Panel de Administración (React + Vite + Lucide - Puerto 5173):** Panel administrativo premium donde se pueden crear, actualizar y desactivar bots (tenants), elegir el tipo de conector, rellenar sus credenciales (encriptadas automáticamente) y activar/desactivar herramientas específicas.
 3. **Widget de Cliente (React + Vite):** Widget de chat autoinyectable encapsulado en un **Shadow DOM**, garantizando que los estilos CSS no tengan conflictos con la web anfitriona. Se sirve estáticamente en `http://localhost:3000/widget.js`.
 4. **Base de Datos (PostgreSQL):** Almacena de forma persistente la configuración de cada bot y sus conectores cifrados mediante Prisma ORM.
@@ -47,6 +47,10 @@ cp .env.example .env
 ```
 Abre el archivo `.env` y configura tus API Keys del LLM que desees usar (ej. `GROQ_API_KEY`, `OPENAI_API_KEY` o `GOOGLE_API_KEY`).
 
+Configura también secretos propios para `JWT_SECRET`, `ENCRYPTION_KEY`,
+`POSTGRES_PASSWORD`, `REDIS_PASSWORD` y `CORS_ORIGINS`. No reutilices claves que
+hayan aparecido en volcados SQL, capturas o archivos compartidos.
+
 ### 2. Levantar el Entorno en Docker
 Compila y levanta la base de datos Postgres, el servidor de caché Redis, el backend NestJS y el panel React en segundo plano:
 ```bash
@@ -54,9 +58,22 @@ docker compose up --build -d
 ```
 *Nota: Al iniciar por primera vez, el contenedor de la aplicación ejecutará automáticamente las migraciones iniciales de Prisma (`npx prisma migrate deploy`) para estructurar la base de datos Postgres.*
 
-### 3. Crear el primer Bot en el Panel Admin
+### 3. Crear el primer administrador y el primer Bot
+
+El endpoint de usuarios no es público. Para el primer despliegue define
+temporalmente `BOOTSTRAP_TOKEN` en `.env` y ejecuta una única vez:
+
+```bash
+curl -X POST http://localhost:3000/auth/bootstrap \
+  -H "Content-Type: application/json" \
+  -H "X-Bootstrap-Token: TU_BOOTSTRAP_TOKEN" \
+  -d '{"username":"admin","email":"admin@tu-dominio.com","password":"CAMBIA_ESTA_CLAVE"}'
+```
+
+Después elimina `BOOTSTRAP_TOKEN` del entorno y reinicia el backend. El endpoint
+se bloquea automáticamente cuando ya existe cualquier usuario.
 1. Ingresa al panel de administración en tu navegador: **`http://localhost:5173`**
-2. Inicia sesión con las credenciales por defecto (o regístrate si no tienes cuenta).
+2. Inicia sesión con el administrador creado arriba.
 3. Haz clic en **＋ Nuevo Bot** y configura:
    * **Nombre del Bot:** Nombre público que se mostrará en el widget.
    * **System Prompt:** Personalidad y contexto del bot (sin necesidad de escribir reglas de herramientas, el backend las inyecta de forma dinámica).

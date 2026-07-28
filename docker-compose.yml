@@ -2,19 +2,19 @@ services:
   postgres:
     image: postgres:17
     container_name: bot_postgres
-    restart: "no"
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: botuser
-      POSTGRES_PASSWORD: botpass
-      POSTGRES_DB: botdb
+      POSTGRES_USER: ${POSTGRES_USER:-botuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}
+      POSTGRES_DB: ${POSTGRES_DB:-botdb}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
     # 🔥 HEALTHCHECK (clave para production)
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U botuser -d botdb"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-botuser} -d ${POSTGRES_DB:-botdb}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -22,50 +22,73 @@ services:
   redis:
     image: redis:7
     container_name: bot_redis
-    restart: "no"
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD es obligatorio}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD es obligatorio}"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   app:
     build: .
     image: chatbot-core-app:latest
     container_name: chatbot_app
+    restart: unless-stopped
 
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
 
     env_file:
       - .env
 
     environment:
-      DATABASE_URL: postgresql://botuser:botpass@postgres:5432/botdb?schema=public
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-botuser}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}@postgres:5432/${POSTGRES_DB:-botdb}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD es obligatorio}@redis:6379
 
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
-    command: >
-      sh -c "npx prisma migrate deploy && node dist/src/main.js"
+    command: ["node", "dist/src/main.js"]
 
-  admin:
-    build: ./admin
-    container_name: chatbot_admin
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
+    container_name: chatbot_migrate
     restart: "no"
 
-    ports:
-      - "5173:5173"
+    env_file:
+      - .env
 
     environment:
-      CHOKIDAR_USEPOLLING: "true"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-botuser}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio}@postgres:5432/${POSTGRES_DB:-botdb}?schema=public
 
-    volumes:
-      - ./admin:/app
-      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  admin:
+    build:
+      context: ./admin
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3000}
+    container_name: chatbot_admin
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:5173:80"
 
     depends_on:
       - app

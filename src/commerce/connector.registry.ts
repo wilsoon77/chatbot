@@ -70,9 +70,20 @@ export class ConnectorRegistry {
   /**
    * Invalida el caché de un tenant (conector + categorías).
    */
-  invalidate(tenantId: string): void {
+  async invalidate(tenantId: string): Promise<void> {
+    const connector = this.cache.get(tenantId) as (ICommerceConnector & {
+      destroy?: () => Promise<void>;
+    }) | undefined;
     this.cache.delete(tenantId);
     this.categoryCache.delete(tenantId);
+
+    if (connector?.destroy) {
+      try {
+        await connector.destroy();
+      } catch (error) {
+        this.logger.warn(`No se pudo cerrar el conector de ${tenantId}: ${(error as Error).message}`);
+      }
+    }
     this.logger.debug(`Caché de conector y categorías invalidado para tenant: ${tenantId}`);
   }
 

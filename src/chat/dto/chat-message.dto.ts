@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, MaxLength, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, MaxLength, IsOptional, Matches } from 'class-validator';
 
 /**
  * DTO para mensajes entrantes al chat.
@@ -7,10 +7,13 @@ import { IsString, IsNotEmpty, MaxLength, IsOptional } from 'class-validator';
 export class ChatMessageDto {
   @IsString()
   @IsNotEmpty({ message: 'El tenant_id es obligatorio' })
+  @MaxLength(128)
+  @Matches(/^[A-Za-z0-9_-]+$/, { message: 'tenant_id contiene caracteres no válidos' })
   tenant_id!: string;
 
   @IsString()
   @IsNotEmpty({ message: 'El session_id es obligatorio' })
+  @Matches(/^[A-Za-z0-9_-]{16,128}$/, { message: 'session_id contiene caracteres no válidos' })
   session_id!: string;
 
   @IsString()

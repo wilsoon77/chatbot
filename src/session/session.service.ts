@@ -1,83 +1,109 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import type { Message } from '../llm/llm.interfaces.js';
 
-/**
- * Servicio de sesiones de chat.
- * Almacena el historial de conversaciones de forma persistente y asíncrona en Redis con TTL de 30 minutos.
- */
+/** Persists chat history in a tenant-scoped Redis namespace. */
 @Injectable()
-export class SessionService {
+export class SessionService implements OnModuleDestroy {
   private readonly logger = new Logger(SessionService.name);
   private readonly redis: Redis;
-
-  /** TTL de sesiones en segundos (30 minutos) */
-  private readonly SESSION_TTL_SECONDS = 30 * 60;
+  private readonly defaultTtlSeconds = 30 * 60;
 
   constructor(private readonly config: ConfigService) {
     const redisUrl = this.config.get<string>('REDIS_URL') || 'redis://localhost:6379';
-    
-    // Inicializar conexión con el servidor de Redis
-    this.redis = new Redis(redisUrl);
-    
+    this.redis = new Redis(redisUrl, {
+      maxRetriesPerRequest: 2,
+      enableReadyCheck: true,
+    });
+
     this.redis.on('connect', () => {
-      this.logger.log('Conectado exitosamente al servidor de Redis para sesiones.');
+      this.logger.log('Conectado a Redis para sesiones.');
     });
 
     this.redis.on('error', (error: Error) => {
-      this.logger.error(`Error en la conexión con Redis: ${error.message}`, error.stack);
+      this.logger.error(`Error de Redis: ${error.message}`);
     });
   }
 
-  /**
-   * Obtiene el historial de una sesión.
-   * Si no existe o expira, retorna un array vacío.
-   */
-  async getHistory(sessionId: string): Promise<Message[]> {
+  async onModuleDestroy(): Promise<void> {
+    await this.redis.quit();
+  }
+
+  async ping(): Promise<boolean> {
     try {
-      const data = await this.redis.get(`session:${sessionId}`);
+      return (await this.redis.ping()) === 'PONG';
+    } catch {
+      return false;
+    }
+  }
+
+  async getHistory(tenantId: string, sessionId: string): Promise<Message[]> {
+    const key = this.sessionKey(tenantId, sessionId);
+
+    try {
+      const data = await this.redis.get(key);
       if (!data) return [];
-      return JSON.parse(data) as Message[];
+
+      const history = JSON.parse(data) as unknown;
+      return Array.isArray(history) ? (history as Message[]) : [];
     } catch (error) {
-      this.logger.error(`Error al leer sesión ${sessionId} desde Redis: ${(error as Error).message}`);
+      this.logger.error(`Error al leer historial de sesión: ${(error as Error).message}`);
       return [];
     }
   }
 
-  /**
-   * Guarda el historial de mensajes de una sesión.
-   * Aplica un TTL nativo por base de datos de 30 minutos.
-   */
-  async saveHistory(sessionId: string, messages: Message[]): Promise<void> {
+  async saveHistory(
+    tenantId: string,
+    sessionId: string,
+    messages: Message[],
+    ttlSeconds?: number,
+  ): Promise<void> {
+    const key = this.sessionKey(tenantId, sessionId);
+
     try {
-      const key = `session:${sessionId}`;
-      const value = JSON.stringify(messages);
-      
-      // Guarda en Redis aplicando TTL de expiración en segundos
-      await this.redis.set(key, value, 'EX', this.SESSION_TTL_SECONDS);
+      const ttl = this.normalizeTtl(ttlSeconds);
+      await this.redis.set(key, JSON.stringify(messages), 'EX', ttl);
     } catch (error) {
-      this.logger.error(`Error al guardar sesión ${sessionId} en Redis: ${(error as Error).message}`);
+      this.logger.error(`Error al guardar historial de sesión: ${(error as Error).message}`);
     }
   }
 
-  /**
-   * Agrega un mensaje al historial de una sesión de forma asíncrona.
-   */
-  async addMessage(sessionId: string, message: Message): Promise<void> {
-    const history = await this.getHistory(sessionId);
+  async addMessage(
+    tenantId: string,
+    sessionId: string,
+    message: Message,
+    ttlSeconds?: number,
+  ): Promise<void> {
+    const history = await this.getHistory(tenantId, sessionId);
     history.push(message);
-    await this.saveHistory(sessionId, history);
+    await this.saveHistory(tenantId, sessionId, history, ttlSeconds);
   }
 
-  /**
-   * Elimina una sesión de la caché de Redis.
-   */
-  async clearSession(sessionId: string): Promise<void> {
+  async clearSession(tenantId: string, sessionId: string): Promise<void> {
+    const key = this.sessionKey(tenantId, sessionId);
+
     try {
-      await this.redis.del(`session:${sessionId}`);
+      await this.redis.del(key);
     } catch (error) {
-      this.logger.error(`Error al eliminar sesión ${sessionId} de Redis: ${(error as Error).message}`);
+      this.logger.error(`Error al eliminar sesión: ${(error as Error).message}`);
     }
+  }
+
+  private sessionKey(tenantId: string, sessionId: string): string {
+    return `session:${this.safePart(tenantId, 'tenantId')}:${this.safePart(sessionId, 'sessionId')}`;
+  }
+
+  private safePart(value: string, name: string): string {
+    if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) {
+      throw new Error(`${name} inválido`);
+    }
+    return value;
+  }
+
+  private normalizeTtl(ttlSeconds?: number): number {
+    const ttl = Number(ttlSeconds ?? this.defaultTtlSeconds);
+    if (!Number.isFinite(ttl)) return this.defaultTtlSeconds;
+    return Math.min(Math.max(Math.trunc(ttl), 60), 24 * 60 * 60);
   }
 }

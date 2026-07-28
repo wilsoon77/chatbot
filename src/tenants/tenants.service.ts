@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { isIP } from 'node:net';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
@@ -23,6 +25,13 @@ const SENSITIVE_FIELDS = new Set([
   'password', 'consumerSecret', 'consumerKey', 'secret', 'token',
 ]);
 
+const SUPPORTED_TOOLS = new Set([
+  'buscar_productos',
+  'ver_stock',
+  'obtener_categorias',
+  'agregar_al_carrito',
+]);
+
 @Injectable()
 export class TenantsService {
   private readonly logger = new Logger(TenantsService.name);
@@ -31,6 +40,7 @@ export class TenantsService {
     private prisma: PrismaService,
     private cryptoService: CryptoService,
     private connectorRegistry: ConnectorRegistry,
+    private config: ConfigService,
   ) {}
 
   // ─── Validación de credenciales ─────────────────────────────────────────
@@ -57,12 +67,119 @@ export class TenantsService {
         );
       }
     }
+
+    if (type === ConnectorType.DIRECT_DATABASE) {
+      const port = Number(credentials.port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new BadRequestException('El puerto de la base de datos debe estar entre 1 y 65535');
+      }
+      this.validateDatabaseHost(String(credentials.host));
+      this.validateSqlMapping(credentials.tableMapping);
+    }
+
+    if (type === ConnectorType.WOOCOMMERCE || type === ConnectorType.ODOO) {
+      this.validateRemoteUrl(String(credentials.url));
+    }
   }
 
   /**
    * Enmascara los campos sensibles de las credenciales para enviar al frontend.
    * Devuelve una copia con los campos sensibles reemplazados por "••••••••".
    */
+  private validateRemoteUrl(value: string): void {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      throw new BadRequestException('La URL del conector no es válida');
+    }
+
+    const isDevelopmentLocal =
+      this.config.get('NODE_ENV') !== 'production' &&
+      ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !isDevelopmentLocal) {
+      throw new BadRequestException('La URL del conector debe usar HTTPS');
+    }
+
+    this.validateAllowedHost(parsed.hostname);
+  }
+
+  private validateDatabaseHost(host: string): void {
+    if (!host || host.length > 253 || /[\s/\\]/.test(host)) {
+      throw new BadRequestException('El host de la base de datos no es válido');
+    }
+
+    this.validateAllowedHost(host);
+    const ipVersion = isIP(host);
+    const forbiddenHostnames = new Set([
+      'localhost',
+      'metadata.google.internal',
+      'metadata.google.com',
+      'instance-data.ec2.internal',
+    ]);
+    if (forbiddenHostnames.has(host.toLowerCase())) {
+      throw new BadRequestException('El host de la base de datos no está permitido');
+    }
+
+    if (ipVersion === 4) {
+      const octets = host.split('.').map(Number);
+      const [first, second] = octets;
+      const privateRange =
+        first === 0 ||
+        first === 10 ||
+        first === 127 ||
+        (first === 169 && second === 254) ||
+        (first === 172 && second >= 16 && second <= 31) ||
+        (first === 192 && second === 168);
+      if (privateRange) {
+        throw new BadRequestException('No se permiten hosts privados o de metadata');
+      }
+    }
+  }
+
+  private validateAllowedHost(hostname: string): void {
+    const configured = (this.config.get<string>('CONNECTOR_ALLOWED_HOSTS') ?? '')
+      .split(',')
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean);
+    if (configured.length > 0) {
+      const normalized = hostname.toLowerCase();
+      const allowed = configured.some(
+        (host) => normalized === host || normalized.endsWith(`.${host}`),
+      );
+      if (!allowed) {
+        throw new BadRequestException('El host no está incluido en CONNECTOR_ALLOWED_HOSTS');
+      }
+    }
+  }
+
+  private validateSqlMapping(mapping: unknown): void {
+    if (!mapping || typeof mapping !== 'object') return;
+
+    const values: string[] = [];
+    const collect = (value: unknown) => {
+      if (typeof value === 'string') values.push(value);
+      else if (value && typeof value === 'object') {
+        for (const nested of Object.values(value)) collect(nested);
+      }
+    };
+    collect(mapping);
+
+    for (const identifier of values) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/.test(identifier)) {
+        throw new BadRequestException('El mapeo contiene un identificador SQL inválido');
+      }
+    }
+  }
+
+  private validateEnabledTools(enabledTools: string[] | undefined): void {
+    if (!enabledTools) return;
+    const unsupported = enabledTools.filter((tool) => !SUPPORTED_TOOLS.has(tool));
+    if (unsupported.length > 0) {
+      throw new BadRequestException(`Herramientas no soportadas: ${unsupported.join(', ')}`);
+    }
+  }
+
   private maskCredentials(credentials: Record<string, any>): Record<string, any> {
     const masked: Record<string, any> = {};
     for (const [key, value] of Object.entries(credentials)) {
@@ -76,32 +193,36 @@ export class TenantsService {
   async create(data: CreateTenantDto) {
     // 1. Validar credenciales según el tipo de conector
     this.validateCredentials(data.connectorType, data.connectorCredentials);
+    this.validateEnabledTools(data.enabledTools);
 
-    // 2. Crear el Tenant
-    const tenant = await this.prisma.tenant.create({
-      data: {
-        nombre: data.nombre,
-        systemPrompt: data.systemPrompt,
-        redisTTL: data.redisTTL,
-      },
-    });
-
-    // 3. Cifrar las credenciales
+    // Cifrar antes de iniciar la transacción para no dejar tenants huérfanos.
     const encryptedCredentials = this.cryptoService.encrypt(
       JSON.stringify(data.connectorCredentials),
     );
 
-    // 4. Crear ConnectorConfig relacionado
-    await this.prisma.connectorConfig.create({
-      data: {
-        tenantId: tenant.id,
-        type: data.connectorType,
-        credentialsJson: encryptedCredentials,
-        enabledToolsJson: JSON.stringify(data.enabledTools || []),
-        isDefault: true,
-        isActive: true,
-      },
-    });
+    const tenant = await this.prisma.$transaction(async (tx) => {
+      const createdTenant = await tx.tenant.create({
+        data: {
+          nombre: data.nombre,
+          systemPrompt: data.systemPrompt,
+          redisTTL: data.redisTTL,
+        },
+      });
+
+      await tx.connectorConfig.create({
+        data: {
+          tenantId: createdTenant.id,
+          type: data.connectorType,
+          credentialsJson: encryptedCredentials,
+          enabledToolsJson: JSON.stringify(data.enabledTools || []),
+          isDefault: true,
+          isActive: true,
+        },
+      });
+
+      return createdTenant;
+    },
+    );
 
     this.logger.log(
       `Tenant "${tenant.nombre}" creado con conector "${data.connectorType}"`,
@@ -196,6 +317,7 @@ export class TenantsService {
         nombre: data.nombre,
         systemPrompt: data.systemPrompt,
         redisTTL: data.redisTTL,
+        isActive: data.isActive,
       },
     });
 
@@ -220,9 +342,12 @@ export class TenantsService {
       const mergedCredentials = { ...data.connectorCredentials };
       
       // Si el campo de contraseña viene vacío o con la máscara, restaurar la contraseña anterior
-      const passwordKeys = ['password', 'consumerSecret'];
+      const passwordKeys = ['password', 'consumerSecret', 'consumerKey'];
       passwordKeys.forEach((key) => {
         const val = mergedCredentials[key];
+        if (typeof val === 'string' && val.length >= 4 && !/[A-Za-z0-9]/.test(val) && credsObj[key]) {
+          mergedCredentials[key] = credsObj[key];
+        }
         if (val === undefined || val === '' || val === '••••••••') {
           if (credsObj[key]) {
             mergedCredentials[key] = credsObj[key];
@@ -234,10 +359,17 @@ export class TenantsService {
       credsObj = mergedCredentials;
     }
 
+    if (Object.keys(credsObj).length === 0) {
+      throw new BadRequestException('Las credenciales del conector son obligatorias');
+    }
+    this.validateCredentials(connectorType, credsObj);
+
     const encryptedCredentials = this.cryptoService.encrypt(JSON.stringify(credsObj));
     const enabledToolsJson = data.enabledTools
       ? JSON.stringify(data.enabledTools)
       : (config ? config.enabledToolsJson : '[]');
+
+    this.validateEnabledTools(data.enabledTools);
 
     if (config) {
       await this.prisma.connectorConfig.update({
@@ -262,7 +394,7 @@ export class TenantsService {
     }
 
     // Invalidar la caché de conectores en caliente
-    this.connectorRegistry.invalidate(id);
+    await this.connectorRegistry.invalidate(id);
 
     this.logger.log(`Tenant "${updated.nombre}" actualizado (conector: ${connectorType})`);
 
@@ -282,6 +414,7 @@ export class TenantsService {
       throw new NotFoundException(`Tenant con id "${id}" no encontrado`);
 
     await this.prisma.tenant.delete({ where: { id } });
+    await this.connectorRegistry.invalidate(id);
 
     return {
       message: `Tenant "${exists.nombre}" eliminado correctamente`,

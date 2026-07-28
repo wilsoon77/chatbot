@@ -4,14 +4,17 @@ export interface Message {
   isStreaming?: boolean;
 }
 
+function resolveBaseUrl(apiUrl?: string): string {
+  return (apiUrl || import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/+$/, '');
+}
+
 export async function sendChatMessage(
   tenantId: string,
   sessionId: string,
-  message: string
+  message: string,
+  apiUrl?: string,
 ): Promise<{ reply: string }> {
-  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-  
-  const response = await fetch(`${baseUrl}/chat`, {
+  const response = await fetch(`${resolveBaseUrl(apiUrl)}/chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -20,7 +23,7 @@ export async function sendChatMessage(
     body: JSON.stringify({
       tenant_id: tenantId,
       session_id: sessionId,
-      message: message,
+      message,
     }),
   });
 
@@ -38,11 +41,10 @@ export async function sendChatMessageStream(
   message: string,
   onToken: (token: string) => void,
   onProducts: (products: any[]) => void,
-  onAction: (action: any) => void
+  onAction: (action: any) => void,
+  apiUrl?: string,
 ): Promise<void> {
-  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-  
-  const response = await fetch(`${baseUrl}/chat/stream`, {
+  const response = await fetch(`${resolveBaseUrl(apiUrl)}/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -51,7 +53,7 @@ export async function sendChatMessageStream(
     body: JSON.stringify({
       tenant_id: tenantId,
       session_id: sessionId,
-      message: message,
+      message,
     }),
   });
 
@@ -67,6 +69,8 @@ export async function sendChatMessageStream(
 
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  let currentEvent = '';
+  let receivedDone = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -74,11 +78,7 @@ export async function sendChatMessageStream(
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
-    
-    // Guardar fragmento incompleto en el buffer
     buffer = lines.pop() || '';
-
-    let currentEvent = '';
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -86,24 +86,34 @@ export async function sendChatMessageStream(
 
       if (trimmed.startsWith('event:')) {
         currentEvent = trimmed.substring(6).trim();
-      } else if (trimmed.startsWith('data:')) {
-        const dataStr = trimmed.substring(5).trim();
-        try {
-          const parsed = JSON.parse(dataStr);
-          if (currentEvent === 'token') {
-            onToken(parsed.content ?? '');
-          } else if (currentEvent === 'products') {
-            onProducts(parsed.products ?? []);
-          } else if (currentEvent === 'action') {
-            onAction(parsed.action ?? null);
-          } else if (currentEvent === 'error') {
-            throw new Error(parsed.message ?? 'Error en stream');
-          }
-        } catch (e) {
-          console.error('Error parseando chunk SSE:', e, line);
-        }
+        continue;
+      }
+
+      if (!trimmed.startsWith('data:')) continue;
+
+      const dataStr = trimmed.substring(5).trim();
+      let parsed: any;
+      try {
+        parsed = JSON.parse(dataStr);
+      } catch {
+        throw new Error('Respuesta SSE inválida');
+      }
+
+      if (currentEvent === 'token') {
+        onToken(parsed.content ?? '');
+      } else if (currentEvent === 'products') {
+        onProducts(parsed.products ?? []);
+      } else if (currentEvent === 'action') {
+        onAction(parsed.action ?? null);
+      } else if (currentEvent === 'error') {
+        throw new Error(parsed.message ?? 'Error en stream');
+      } else if (currentEvent === 'done') {
+        receivedDone = true;
       }
     }
   }
-}
 
+  if (!receivedDone) {
+    throw new Error('La conexión SSE terminó antes de completar la respuesta');
+  }
+}

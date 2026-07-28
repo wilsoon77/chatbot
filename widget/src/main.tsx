@@ -24,6 +24,7 @@ class ChatbotWidget extends HTMLElement {
     const color = this.getAttribute('data-color') || '#10b981';
     const botName = this.getAttribute('data-bot-name') || 'Asistente';
     const avatarUrl = this.getAttribute('data-avatar-url') || '';
+    const apiUrl = this.getAttribute('data-api-url') || undefined;
 
     // 5. Montar y renderizar la aplicación de React
     const root = createRoot(container);
@@ -33,6 +34,7 @@ class ChatbotWidget extends HTMLElement {
         color={color}
         botName={botName}
         avatarUrl={avatarUrl}
+        apiUrl={apiUrl}
       />
     );
   }
@@ -52,6 +54,11 @@ if (currentScript) {
   const color = currentScript.getAttribute('data-color') || '#10b981';
   const botName = currentScript.getAttribute('data-bot-name') || 'Asistente';
   const avatarUrl = currentScript.getAttribute('data-avatar-url') || '';
+  const configuredApiUrl = currentScript.getAttribute('data-api-url');
+  const scriptApiUrl = currentScript instanceof HTMLScriptElement && currentScript.src
+    ? new URL(currentScript.src, window.location.href).origin
+    : undefined;
+  const apiUrl = configuredApiUrl || scriptApiUrl;
 
   // Crear la etiqueta del Custom Element e inyectarla
   const widgetElement = document.createElement('chatbot-widget');
@@ -59,6 +66,7 @@ if (currentScript) {
   widgetElement.setAttribute('data-color', color);
   widgetElement.setAttribute('data-bot-name', botName);
   widgetElement.setAttribute('data-avatar-url', avatarUrl);
+  if (apiUrl) widgetElement.setAttribute('data-api-url', apiUrl);
 
   document.body.appendChild(widgetElement);
 }

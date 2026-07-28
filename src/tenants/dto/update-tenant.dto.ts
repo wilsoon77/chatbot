@@ -6,6 +6,8 @@ import {
   IsBoolean,
   IsEnum,
   IsObject,
+  Min,
+  Max,
 } from 'class-validator';
 import { ConnectorType } from './connector-credentials.dto.js';
 
@@ -20,6 +22,8 @@ export class UpdateTenantDto {
 
   @IsInt()
   @IsOptional()
+  @Min(60)
+  @Max(86400)
   redisTTL?: number;
 
   @IsBoolean()

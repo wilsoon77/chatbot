@@ -1,6 +1,6 @@
 import { useTenants } from '../hooks/useTenants';
 import { TenantCard } from '../components/TenantCardFinal';
-import { Home, Users, Bot, LogOut, RefreshCw, Plus, HelpCircle } from 'lucide-react';
+import { Home, Users, Bot, LogOut, RefreshCw, Plus } from 'lucide-react';
 import './TenantsPage.css';
 import logo from '../../../assets/images/chatgo.png';
 

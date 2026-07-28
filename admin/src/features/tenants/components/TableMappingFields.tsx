@@ -5,6 +5,8 @@ import { useState } from 'react';
 interface TableMapping {
   products: string;
   categories: string;
+  orders: string;
+  orderItems: string;
   columns: {
     product: {
       id: string;
@@ -23,6 +25,19 @@ interface TableMapping {
       name: string;
       count?: string;
     };
+    order: {
+      id: string;
+      status: string;
+      total: string;
+      date: string;
+      email?: string;
+    };
+    orderItem: {
+      orderId: string;
+      productName: string;
+      quantity: string;
+      price: string;
+    };
   };
 }
 
@@ -31,6 +46,8 @@ interface TableMapping {
 export const DEFAULT_TABLE_MAPPING: TableMapping = {
   products: 'products',
   categories: 'categories',
+  orders: 'orders',
+  orderItems: 'order_items',
   columns: {
     product: {
       id: 'id',
@@ -49,6 +66,19 @@ export const DEFAULT_TABLE_MAPPING: TableMapping = {
       name: 'name',
       count: 'product_count',
     },
+    order: {
+      id: 'id',
+      status: 'status',
+      total: 'total',
+      date: 'created_at',
+      email: 'customer_email',
+    },
+    orderItem: {
+      orderId: 'order_id',
+      productName: 'product_name',
+      quantity: 'quantity',
+      price: 'price',
+    },
   },
 };
 
@@ -63,6 +93,8 @@ interface MappingField {
 
 const TABLE_FIELDS: MappingField[] = [
   { key: 'products', label: 'Tabla de productos', placeholder: 'products', required: true },
+  { key: 'orders', label: 'Tabla de pedidos', placeholder: 'orders', required: true },
+  { key: 'orderItems', label: 'Tabla de líneas de pedido', placeholder: 'order_items', required: true },
   { key: 'categories', label: 'Tabla de categorías', placeholder: 'categories', required: true },
 ];
 
@@ -85,6 +117,21 @@ const CATEGORY_COLUMN_FIELDS: MappingField[] = [
   { key: 'count', label: 'Conteo de productos', placeholder: 'product_count' },
 ];
 
+const ORDER_COLUMN_FIELDS: MappingField[] = [
+  { key: 'id', label: 'ID', placeholder: 'id', required: true },
+  { key: 'status', label: 'Estado', placeholder: 'status', required: true },
+  { key: 'total', label: 'Total', placeholder: 'total', required: true },
+  { key: 'date', label: 'Fecha', placeholder: 'created_at', required: true },
+  { key: 'email', label: 'Email del cliente', placeholder: 'customer_email' },
+];
+
+const ORDER_ITEM_COLUMN_FIELDS: MappingField[] = [
+  { key: 'orderId', label: 'ID del pedido', placeholder: 'order_id', required: true },
+  { key: 'productName', label: 'Producto', placeholder: 'product_name', required: true },
+  { key: 'quantity', label: 'Cantidad', placeholder: 'quantity', required: true },
+  { key: 'price', label: 'Precio', placeholder: 'price', required: true },
+];
+
 // ─── Componente ──────────────────────────────────────────────────────────────
 
 interface TableMappingFieldsProps {
@@ -98,9 +145,22 @@ export function TableMappingFields({ mapping, onChange }: TableMappingFieldsProp
   const [expanded, setExpanded] = useState(false);
 
   // Usar el mapeo proporcionado o el por defecto
-  const current: TableMapping = mapping ?? DEFAULT_TABLE_MAPPING;
+  const current: TableMapping = mapping
+    ? {
+        ...DEFAULT_TABLE_MAPPING,
+        ...mapping,
+        columns: {
+          ...DEFAULT_TABLE_MAPPING.columns,
+          ...mapping.columns,
+          product: { ...DEFAULT_TABLE_MAPPING.columns.product, ...mapping.columns?.product },
+          category: { ...DEFAULT_TABLE_MAPPING.columns.category, ...mapping.columns?.category },
+          order: { ...DEFAULT_TABLE_MAPPING.columns.order, ...mapping.columns?.order },
+          orderItem: { ...DEFAULT_TABLE_MAPPING.columns.orderItem, ...mapping.columns?.orderItem },
+        },
+      }
+    : DEFAULT_TABLE_MAPPING;
 
-  const updateTable = (key: 'products' | 'categories', value: string) => {
+  const updateTable = (key: 'products' | 'categories' | 'orders' | 'orderItems', value: string) => {
     onChange({ ...current, [key]: value });
   };
 
@@ -173,7 +233,7 @@ export function TableMappingFields({ mapping, onChange }: TableMappingFieldsProp
                     type="text"
                     placeholder={field.placeholder}
                     value={current[field.key] ?? ''}
-                    onChange={(e) => updateTable(field.key as 'products' | 'categories', e.target.value)}
+                    onChange={(e) => updateTable(field.key as 'products' | 'categories' | 'orders' | 'orderItems', e.target.value)}
                   />
                 </div>
               ))}
@@ -222,6 +282,66 @@ export function TableMappingFields({ mapping, onChange }: TableMappingFieldsProp
                     placeholder={field.placeholder}
                     value={(current.columns.category as any)[field.key] ?? ''}
                     onChange={(e) => updateCategoryColumn(field.key, e.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Columnas de pedido */}
+          <div className="nt-table-mapping__section">
+            <h4 className="nt-table-mapping__section-title">Columnas de pedidos</h4>
+            <div className="nt-table-mapping__grid">
+              {ORDER_COLUMN_FIELDS.map((field) => (
+                <div key={field.key} className="nt-field">
+                  <label className="nt-label">
+                    {field.label}
+                    {field.required
+                      ? <span className="nt-required">*</span>
+                      : <span className="nt-optional">(opcional)</span>}
+                  </label>
+                  <input
+                    className="nt-input nt-input--mono"
+                    type="text"
+                    placeholder={field.placeholder}
+                    value={(current.columns.order as any)[field.key] ?? ''}
+                    onChange={(e) => onChange({
+                      ...current,
+                      columns: {
+                        ...current.columns,
+                        order: { ...current.columns.order, [field.key]: e.target.value || undefined },
+                      },
+                    })}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Columnas de líneas de pedido */}
+          <div className="nt-table-mapping__section">
+            <h4 className="nt-table-mapping__section-title">Columnas de líneas de pedido</h4>
+            <div className="nt-table-mapping__grid">
+              {ORDER_ITEM_COLUMN_FIELDS.map((field) => (
+                <div key={field.key} className="nt-field">
+                  <label className="nt-label">
+                    {field.label}
+                    {field.required
+                      ? <span className="nt-required">*</span>
+                      : <span className="nt-optional">(opcional)</span>}
+                  </label>
+                  <input
+                    className="nt-input nt-input--mono"
+                    type="text"
+                    placeholder={field.placeholder}
+                    value={(current.columns.orderItem as any)[field.key] ?? ''}
+                    onChange={(e) => onChange({
+                      ...current,
+                      columns: {
+                        ...current.columns,
+                        orderItem: { ...current.columns.orderItem, [field.key]: e.target.value || undefined },
+                      },
+                    })}
                   />
                 </div>
               ))}

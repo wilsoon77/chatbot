@@ -126,8 +126,72 @@ export class DatabaseConnector implements ICommerceConnector {
 
   constructor(credentials: DatabaseCredentials) {
     this.creds = credentials;
-    this.mapping = credentials.tableMapping ?? DEFAULT_TABLE_MAPPING;
+    this.mapping = this.buildMapping(credentials.tableMapping);
+    this.assertSafeMapping(this.mapping);
     this.currency = credentials.currency || '$';
+  }
+
+  private buildMapping(custom?: TableMapping): TableMapping {
+    if (!custom) return DEFAULT_TABLE_MAPPING;
+
+    const raw = custom as TableMapping & {
+      columns?: Partial<TableMapping['columns']>;
+      product?: TableMapping['columns']['product'];
+      category?: TableMapping['columns']['category'];
+      order?: TableMapping['columns']['order'];
+      orderItem?: TableMapping['columns']['orderItem'];
+    };
+    const customColumns = raw.columns ?? {
+      product: raw.product,
+      category: raw.category,
+      order: raw.order,
+      orderItem: raw.orderItem,
+    };
+
+    return {
+      ...DEFAULT_TABLE_MAPPING,
+      ...custom,
+      columns: {
+        ...DEFAULT_TABLE_MAPPING.columns,
+        ...customColumns,
+        product: { ...DEFAULT_TABLE_MAPPING.columns.product, ...(customColumns.product ?? {}) },
+        category: { ...DEFAULT_TABLE_MAPPING.columns.category, ...(customColumns.category ?? {}) },
+        order: { ...DEFAULT_TABLE_MAPPING.columns.order, ...(customColumns.order ?? {}) },
+        orderItem: { ...DEFAULT_TABLE_MAPPING.columns.orderItem, ...(customColumns.orderItem ?? {}) },
+      },
+    };
+  }
+
+  private assertSafeMapping(mapping: TableMapping): void {
+    const identifiers: Array<[string, string | undefined]> = [
+      ['products', mapping.products],
+      ['categories', mapping.categories],
+      ['orders', mapping.orders],
+      ['orderItems', mapping.orderItems],
+      ...Object.entries(mapping.columns.product).map(([key, value]) => [`columns.product.${key}`, value] as [string, string | undefined]),
+      ...Object.entries(mapping.columns.category).map(([key, value]) => [`columns.category.${key}`, value] as [string, string | undefined]),
+      ...Object.entries(mapping.columns.order).map(([key, value]) => [`columns.order.${key}`, value] as [string, string | undefined]),
+      ...Object.entries(mapping.columns.orderItem).map(([key, value]) => [`columns.orderItem.${key}`, value] as [string, string | undefined]),
+    ];
+
+    for (const [name, identifier] of identifiers) {
+      if (identifier !== undefined) this.sqlIdentifier(identifier, name);
+    }
+  }
+
+  private sqlIdentifier(identifier: string, fieldName = 'identifier'): string {
+    if (
+      typeof identifier !== 'string' ||
+      !/^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/.test(identifier)
+    ) {
+      throw new Error(`Identificador SQL inválido en ${fieldName}`);
+    }
+
+    const quote = this.creds.driver === 'mysql' ? '`' : '"';
+    return identifier
+      .split('.')
+      .map((part) => `${quote}${part}${quote}`)
+      .join('.');
   }
 
   /**
@@ -149,6 +213,7 @@ export class DatabaseConnector implements ICommerceConnector {
         password,
         max: 5,
         idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
       });
       this.logger.log(`Pool PostgreSQL creado: ${host}:${port}/${database}`);
     } else if (driver === 'mysql') {
@@ -161,6 +226,7 @@ export class DatabaseConnector implements ICommerceConnector {
         password,
         waitForConnections: true,
         connectionLimit: 5,
+        connectTimeout: 10000,
       });
       this.logger.log(`Pool MySQL creado: ${host}:${port}/${database}`);
     } else {
@@ -213,21 +279,21 @@ export class DatabaseConnector implements ICommerceConnector {
 
     if (query && query.trim()) {
       params.push(`%${query.trim()}%`);
-      conditions.push(`${m.name} ${like} ?`);
+      conditions.push(`${this.sqlIdentifier(m.name)} ${like} ?`);
     }
 
     if (opciones.categoria) {
       const catId = await this.resolveCategoryId(opciones.categoria);
-      if (catId) {
+      if (catId && m.categoryId) {
         params.push(catId);
-        conditions.push(`${m.categoryId} = ?`);
+        conditions.push(`${this.sqlIdentifier(m.categoryId)} = ?`);
       }
     }
 
     const whereClause =
       conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const sql = `SELECT * FROM ${this.mapping.products} ${whereClause} LIMIT ?`;
+    const sql = `SELECT * FROM ${this.sqlIdentifier(this.mapping.products)} ${whereClause} LIMIT ?`;
     params.push(limite);
 
     const rows = await this.query<any>(sql, params);
@@ -236,7 +302,7 @@ export class DatabaseConnector implements ICommerceConnector {
 
   async obtenerCategorias(): Promise<CategoryDto[]> {
     const m = this.mapping.columns.category;
-    const sql = `SELECT ${m.id}, ${m.name}${m.count ? `, ${m.count}` : ''} FROM ${this.mapping.categories}`;
+    const sql = `SELECT ${this.sqlIdentifier(m.id)}, ${this.sqlIdentifier(m.name)}${m.count ? `, ${this.sqlIdentifier(m.count)}` : ''} FROM ${this.sqlIdentifier(this.mapping.categories)}`;
     const rows = await this.query<any>(sql);
 
     return rows.map((row) => ({
@@ -250,7 +316,7 @@ export class DatabaseConnector implements ICommerceConnector {
     productoId: string,
   ): Promise<Pick<ProductDto, 'id' | 'nombre' | 'disponible' | 'stock'>> {
     const m = this.mapping.columns.product;
-    const sql = `SELECT ${m.id}, ${m.name}, ${m.stock}${m.stockStatus ? `, ${m.stockStatus}` : ''} FROM ${this.mapping.products} WHERE ${m.id} = ? LIMIT 1`;
+    const sql = `SELECT ${this.sqlIdentifier(m.id)}, ${this.sqlIdentifier(m.name)}, ${this.sqlIdentifier(m.stock)}${m.stockStatus ? `, ${this.sqlIdentifier(m.stockStatus)}` : ''} FROM ${this.sqlIdentifier(this.mapping.products)} WHERE ${this.sqlIdentifier(m.id)} = ? LIMIT 1`;
     const rows = await this.query<any>(sql, [productoId]);
 
     if (rows.length === 0) {
@@ -276,7 +342,7 @@ export class DatabaseConnector implements ICommerceConnector {
     const im = this.mapping.columns.orderItem;
 
     // Obtener el pedido
-    const orderSql = `SELECT * FROM ${this.mapping.orders} WHERE ${om.id} = ? LIMIT 1`;
+    const orderSql = `SELECT * FROM ${this.sqlIdentifier(this.mapping.orders)} WHERE ${this.sqlIdentifier(om.id)} = ? LIMIT 1`;
     const orderRows = await this.query<any>(orderSql, [pedidoId]);
 
     if (orderRows.length === 0) {
@@ -286,7 +352,7 @@ export class DatabaseConnector implements ICommerceConnector {
     const order = orderRows[0];
 
     // Obtener los items del pedido
-    const itemsSql = `SELECT ${im.productName}, ${im.quantity}, ${im.price} FROM ${this.mapping.orderItems} WHERE ${im.orderId} = ?`;
+    const itemsSql = `SELECT ${this.sqlIdentifier(im.productName)}, ${this.sqlIdentifier(im.quantity)}, ${this.sqlIdentifier(im.price)} FROM ${this.sqlIdentifier(this.mapping.orderItems)} WHERE ${this.sqlIdentifier(im.orderId)} = ?`;
     const itemRows = await this.query<any>(itemsSql, [pedidoId]);
 
     return {
@@ -328,7 +394,7 @@ export class DatabaseConnector implements ICommerceConnector {
     // Es un nombre — buscar en la tabla de categorías
     const m = this.mapping.columns.category;
     const like = this.likeOperator();
-    const sql = `SELECT ${m.id} FROM ${this.mapping.categories} WHERE ${m.name} ${like} ? LIMIT 1`;
+    const sql = `SELECT ${this.sqlIdentifier(m.id)} FROM ${this.sqlIdentifier(this.mapping.categories)} WHERE ${this.sqlIdentifier(m.name)} ${like} ? LIMIT 1`;
     const rows = await this.query<any>(sql, [`%${trimmed}%`]);
 
     if (rows.length > 0) {

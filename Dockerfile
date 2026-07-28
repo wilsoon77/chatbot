@@ -4,7 +4,7 @@ WORKDIR /app/widget
 COPY widget/package*.json ./
 RUN npm config set fetch-timeout 600000 && \
     npm config set fetch-retries 5 && \
-    npm install
+    npm ci
 COPY widget/ ./
 RUN npm run build
 
@@ -14,7 +14,7 @@ WORKDIR /app
 COPY package*.json tsconfig*.json tsconfig.build.json nest-cli.json ./
 RUN npm config set fetch-timeout 600000 && \
     npm config set fetch-retries 5 && \
-    npm install
+    npm ci
 COPY prisma.config.ts ./
 COPY prisma/ ./prisma/
 ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
@@ -30,12 +30,14 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm config set fetch-timeout 600000 && \
     npm config set fetch-retries 5 && \
-    npm install --omit=dev
+    npm ci --omit=dev
 COPY prisma.config.ts ./
 COPY prisma/ ./prisma/
 COPY --from=backend-builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
 COPY --from=backend-builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=backend-builder /app/dist ./dist
 COPY --from=backend-builder /app/public ./public
+RUN chown -R node:node /app
+USER node
 EXPOSE 3000
 CMD ["node", "dist/src/main.js"]

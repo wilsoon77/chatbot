@@ -10,9 +10,10 @@ interface AppProps {
   color: string;
   botName: string;
   avatarUrl: string;
+  apiUrl?: string;
 }
 
-export default function App({ tenant, color, botName, avatarUrl }: AppProps) {
+export default function App({ tenant, color, botName, avatarUrl, apiUrl }: AppProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
@@ -25,7 +26,7 @@ export default function App({ tenant, color, botName, avatarUrl }: AppProps) {
     if (!tenant) return;
 
     // 1. Verificar si la última actividad ha expirado (más de 30 minutos)
-    const TTL_MS = 30 * 60 * 1000; // 30 minutos
+    const TTL_MS = 60 * 60 * 1000;
     const storedLastActivity = localStorage.getItem(`chat_last_activity_${tenant}`);
     if (storedLastActivity) {
       const lastActivity = Number(storedLastActivity);
@@ -44,7 +45,8 @@ export default function App({ tenant, color, botName, avatarUrl }: AppProps) {
     // 2. Inicializar session_id único de forma persistente para este navegador
     let sId = localStorage.getItem(`chat_session_${tenant}`);
     if (!sId) {
-      sId = `sess_${Math.random().toString(36).substring(2, 15)}_${Date.now()}`;
+      sId = globalThis.crypto?.randomUUID?.() ??
+        `sess_${Math.random().toString(36).substring(2, 15)}_${Date.now()}`;
       localStorage.setItem(`chat_session_${tenant}`, sId);
       // Establecer actividad inicial
       localStorage.setItem(`chat_last_activity_${tenant}`, Date.now().toString());
@@ -145,7 +147,8 @@ export default function App({ tenant, color, botName, avatarUrl }: AppProps) {
             });
             window.dispatchEvent(event);
           }
-        }
+        },
+        apiUrl,
       );
 
       // Una vez finalizado el stream con éxito
@@ -169,6 +172,26 @@ export default function App({ tenant, color, botName, avatarUrl }: AppProps) {
       });
 
     } catch (streamError) {
+      const canUseSyncFallback =
+        streamError instanceof Error &&
+        streamError.message === 'ReadableStream no soportado en la respuesta';
+
+      // No reintentar una petición que el backend pudo haber procesado: hacerlo
+      // podría duplicar compras, llamadas a herramientas o mensajes del LLM.
+      if (!canUseSyncFallback) {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          const errorMsg: Message = {
+            role: 'assistant',
+            content: 'No se pudo completar la respuesta. Intenta de nuevo.',
+          };
+          return last?.role === 'assistant' && last.isStreaming
+            ? [...prev.slice(0, -1), errorMsg]
+            : [...prev, errorMsg];
+        });
+        setIsTyping(false);
+        return;
+      }
       console.warn('Falló el streaming de chat o no está soportado. Usando fallback sincrónico...', streamError);
       
       // Asegurarse de que el typing indicator esté activo de nuevo para el fallback
@@ -185,7 +208,7 @@ export default function App({ tenant, color, botName, avatarUrl }: AppProps) {
 
       try {
         // 4. Fallback sincrónico
-        const res = await sendChatMessage(tenant, sessionId, text);
+        const res = await sendChatMessage(tenant, sessionId, text, apiUrl);
 
         // Agregar respuesta del bot al chat
         const assistantMsg: Message = { role: 'assistant', content: res.reply };

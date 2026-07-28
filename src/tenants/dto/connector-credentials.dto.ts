@@ -47,27 +47,70 @@ export class OrderItemColumnsDto {
   @IsString() price!: string;
 }
 
-export class TableMappingDto {
-  @IsString() products!: string;
-  @IsString() categories!: string;
-  @IsString() orders!: string;
-  @IsString() orderItems!: string;
-
+export class TableColumnsDto {
+  @IsOptional()
   @ValidateNested()
   @Type(() => ProductColumnsDto)
-  product!: ProductColumnsDto;
+  product?: ProductColumnsDto;
 
+  @IsOptional()
   @ValidateNested()
   @Type(() => CategoryColumnsDto)
-  category!: CategoryColumnsDto;
+  category?: CategoryColumnsDto;
 
+  @IsOptional()
   @ValidateNested()
   @Type(() => OrderColumnsDto)
-  order!: OrderColumnsDto;
+  order?: OrderColumnsDto;
 
+  @IsOptional()
   @ValidateNested()
   @Type(() => OrderItemColumnsDto)
-  orderItem!: OrderItemColumnsDto;
+  orderItem?: OrderItemColumnsDto;
+}
+
+export class TableMappingDto {
+  @IsOptional()
+  @IsString()
+  products?: string;
+
+  @IsOptional()
+  @IsString()
+  categories?: string;
+
+  @IsOptional()
+  @IsString()
+  orders?: string;
+
+  @IsOptional()
+  @IsString()
+  orderItems?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TableColumnsDto)
+  columns?: TableColumnsDto;
+
+  // Compatibilidad con el formato anterior (columnas al nivel raíz).
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ProductColumnsDto)
+  product?: ProductColumnsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CategoryColumnsDto)
+  category?: CategoryColumnsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => OrderColumnsDto)
+  order?: OrderColumnsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => OrderItemColumnsDto)
+  orderItem?: OrderItemColumnsDto;
 }
 
 /** Credenciales para WooCommerce (API REST). */

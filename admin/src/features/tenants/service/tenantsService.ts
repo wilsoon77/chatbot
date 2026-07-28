@@ -33,16 +33,18 @@ export interface DatabaseCredentials {
 export interface TableMapping {
   products: string;
   categories: string;
-  orders: string;
-  orderItems: string;
-  product: {
-    id: string; name: string; price: string; stock: string;
-    stockStatus?: string; sku?: string; description?: string;
-    image?: string; url?: string; categoryId?: string;
+  orders?: string;
+  orderItems?: string;
+  columns: {
+    product: {
+      id: string; name: string; price: string; stock: string;
+      stockStatus?: string; sku?: string; description?: string;
+      image?: string; url?: string; categoryId?: string;
+    };
+    category: { id: string; name: string; count?: string };
+    order?: { id: string; status: string; total: string; date: string; email?: string };
+    orderItem?: { orderId: string; productName: string; quantity: string; price: string };
   };
-  category: { id: string; name: string; count?: string };
-  order: { id: string; status: string; total: string; date: string; email?: string };
-  orderItem: { orderId: string; productName: string; quantity: string; price: string };
 }
 
 export type ConnectorCredentials =

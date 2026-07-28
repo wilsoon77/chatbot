@@ -10,7 +10,6 @@ import './EditTenantPage.css';
 const AVAILABLE_TOOLS = [
   { id: 'buscar_productos',    label: 'Buscar productos' },
   { id: 'ver_stock',           label: 'Ver stock' },
-  { id: 'ver_estado_pedido',   label: 'Ver estado de pedido' },
   { id: 'obtener_categorias',  label: 'Obtener categorías' },
   { id: 'agregar_al_carrito',  label: 'Agregar al carrito' },
 ];

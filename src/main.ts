@@ -15,15 +15,30 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
-      forbidNonWhitelisted: false,
-      
+      forbidNonWhitelisted: true,
       transform: true,
     }),
   );
 
+  const isProduction = process.env.NODE_ENV === 'production';
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: process.env.NODE_ENV === 'production' ? false : '*',
+    origin: (requestOrigin, callback) => {
+      if (!isProduction && allowedOrigins.length === 0) {
+        callback(null, true);
+        return;
+      }
+
+      callback(null, Boolean(requestOrigin && allowedOrigins.includes(requestOrigin)));
+    },
+    credentials: false,
   });
+
+  app.enableShutdownHooks();
 
   const port = process.env.PORT || 3000;
   await app.listen(port, '0.0.0.0');

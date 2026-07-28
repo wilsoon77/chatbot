@@ -1,5 +1,8 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { LlmService } from '../../llm/llm.service.js';
+import { PrismaService } from '../../prisma/prisma.service.js';
+import { SessionService } from '../../session/session.service.js';
 
 /**
  * Health check endpoint.
@@ -7,22 +10,30 @@ import { LlmService } from '../../llm/llm.service.js';
  */
 @Controller('health')
 export class HealthController {
-  constructor(private readonly llmService: LlmService) {}
+  constructor(
+    private readonly llmService: LlmService,
+    private readonly prisma: PrismaService,
+    private readonly sessionService: SessionService,
+  ) {}
 
   @Get()
-  async check() {
+  async check(@Res({ passthrough: true }) response: Response) {
     const modelInfo = this.llmService.getModelInfo();
-    let llmConnected = false;
-
-    try {
-      llmConnected = await this.llmService.validateConnection();
-    } catch {
-      llmConnected = false;
-    }
+    const [llmConnected, databaseConnected, redisConnected] = await Promise.all([
+      this.llmService.validateConnection().catch(() => false),
+      this.prisma.$queryRaw`SELECT 1`.then(() => true).catch(() => false),
+      this.sessionService.ping(),
+    ]);
+    const healthy = llmConnected && databaseConnected && redisConnected;
+    if (!healthy) response.status(503);
 
     return {
-      status: 'ok',
+      status: healthy ? 'ok' : 'degraded',
       timestamp: new Date().toISOString(),
+      dependencies: {
+        database: databaseConnected,
+        redis: redisConnected,
+      },
       llm: {
         ...modelInfo,
         connected: llmConnected,

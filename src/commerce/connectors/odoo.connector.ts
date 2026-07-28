@@ -5,6 +5,7 @@ import {
   CategoryDto,
   OrderDto,
 } from '../commerce.interfaces.js';
+import { fetchWithTimeout } from './fetch-with-timeout.js';
 
 /**
  * Credenciales para conexión a Odoo via JSON-RPC.
@@ -121,7 +122,7 @@ export class OdooConnector implements ICommerceConnector {
 
     const endpoint = `${this.creds.url.replace(/\/$/, '')}/jsonrpc`;
 
-    const response = await fetch(endpoint, {
+    const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

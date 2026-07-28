@@ -5,6 +5,7 @@ import {
   CategoryDto,
   OrderDto,
 } from '../commerce.interfaces.js';
+import { fetchWithTimeout } from './fetch-with-timeout.js';
 
 interface WooCredentials {
   url: string;            // URL de la tienda
@@ -377,7 +378,7 @@ export class WooCommerceConnector implements ICommerceConnector {
       `${this.creds.consumerKey}:${this.creds.consumerSecret}`,
     ).toString('base64');
 
-    const response = await fetch(url.toString(), {
+    const response = await fetchWithTimeout(url.toString(), {
       headers: {
         Authorization: `Basic ${credentialsBase64}`,
         'Content-Type': 'application/json',

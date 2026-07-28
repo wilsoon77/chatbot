@@ -1,4 +1,4 @@
-import { IsString, IsArray, IsInt, IsOptional, IsEnum, IsObject } from 'class-validator';
+import { IsString, IsArray, IsInt, IsOptional, IsEnum, IsObject, Min, Max } from 'class-validator';
 import { ConnectorType } from './connector-credentials.dto.js';
 
 export class CreateTenantDto {
@@ -10,6 +10,8 @@ export class CreateTenantDto {
 
   @IsInt()
   @IsOptional()
+  @Min(60)
+  @Max(86400)
   redisTTL?: number;
 
   // ─── Conector ──────────────────────────────────────────────────────────

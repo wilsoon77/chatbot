@@ -58,7 +58,9 @@ export class ChatStreamController {
       res.write(`event: done\ndata: {}\n\n`);
     } catch (error) {
       this.logger.error(`Error en el controlador de streaming: ${(error as Error).message}`);
-      res.write(`event: error\ndata: ${JSON.stringify({ message: (error as Error).message })}\n\n`);
+      res.write(
+        `event: error\ndata: ${JSON.stringify({ message: 'No se pudo procesar la solicitud.' })}\n\n`,
+      );
     } finally {
       clearInterval(heartbeatInterval);
       res.end();
