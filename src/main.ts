@@ -28,12 +28,21 @@ async function bootstrap() {
 
   app.enableCors({
     origin: (requestOrigin, callback) => {
-      if (!isProduction && allowedOrigins.length === 0) {
+      if (!requestOrigin) {
         callback(null, true);
         return;
       }
 
-      callback(null, Boolean(requestOrigin && allowedOrigins.includes(requestOrigin)));
+      if (
+        allowedOrigins.length === 0 ||
+        allowedOrigins.includes('*') ||
+        allowedOrigins.includes(requestOrigin)
+      ) {
+        callback(null, true);
+        return;
+      }
+
+      callback(null, false);
     },
     credentials: false,
   });
