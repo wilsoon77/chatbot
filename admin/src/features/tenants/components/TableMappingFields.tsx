@@ -232,7 +232,7 @@ export function TableMappingFields({ mapping, onChange }: TableMappingFieldsProp
                     className="nt-input nt-input--mono"
                     type="text"
                     placeholder={field.placeholder}
-                    value={current[field.key] ?? ''}
+                    value={(current as any)[field.key] ?? ''}
                     onChange={(e) => updateTable(field.key as 'products' | 'categories' | 'orders' | 'orderItems', e.target.value)}
                   />
                 </div>
